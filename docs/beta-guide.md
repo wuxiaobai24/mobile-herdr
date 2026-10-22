@@ -15,11 +15,11 @@
 从邀请人获取同一版本的 `.tar.gz` 与 `.tar.gz.sha256`，放在同一目录：
 
 ```bash
-sha256sum -c mobile-herdr-0.2.2-beta.1.tar.gz.sha256
-# macOS 上校验可用：shasum -a 256 -c mobile-herdr-0.2.2-beta.1.tar.gz.sha256
+sha256sum -c mobile-herdr-0.2.2-beta.2.tar.gz.sha256
+# macOS 上校验可用：shasum -a 256 -c mobile-herdr-0.2.2-beta.2.tar.gz.sha256
 
-tar -xzf mobile-herdr-0.2.2-beta.1.tar.gz
-cd mobile-herdr-0.2.2-beta.1
+tar -xzf mobile-herdr-0.2.2-beta.2.tar.gz
+cd mobile-herdr-0.2.2-beta.2
 ./bin/mobile-herdr --version
 ```
 
@@ -57,7 +57,19 @@ HTTPS 下可通过浏览器菜单添加到主屏幕。普通局域网 HTTP 可�
 
 第一次启动自动生成 `~/.local/state/mobile-herdr/token`（权限 0600）。也可在连接窗口手动填写地址和该文件中的密钥。默认端口为 7331；如冲突，可设置 `MOBILE_HERDR_PORT=7332`，配对地址也要相应调整。手动通过环境变量设置 token 时，bridge 与 pair 须使用相同环境。
 
-## 3. 继续现有会话
+## 3. 自动连接 Herdr SSH machines
+
+入口 bridge 现在会自动发现同一账号下 Herdr 已保存并启用的 SSH machines。配对入口后，打开“开发机”即可看到远端机器与连接状态；不需要再逐台扫码或手动输入远端 token。
+
+1. 在**运行入口 bridge 的开发机、同一账号**执行 `herdr machine list --json`，确认能看到目标机器。保存在另一台电脑上的 profiles 不会自动同步。
+2. 本地需要 OpenSSH；远端需要 Bun 1.4+、已运行的 Herdr protocol 22 session，以及 SSH 能找到的 Herdr CLI。无需在远端安装本项目或开放 Web 端口，但 SSH 服务须允许 Unix socket 转发。
+3. 机器会自动连接；点击对应行进入，或保持当前机器继续工作。禁用的 profile 不会连接。认证失败时按页面提示在入口开发机运行 `herdr machine reconnect <ID>`，完成后自动重试；不要在手机输入 SSH 密码或私钥。
+
+此路径只在 SSH 内临时执行 bridge，读取远端 transcript 与已有原生注册实例，不启动第二份 agent，不启动或重启 Herdr，也不安装远端包。关闭入口或失去 SSH 后临时 bridge 自动清理，Herdr session 与原生 agent 保持运行。草稿按机器、session 和 pane 分开，重连不会自动重发。
+
+远端 Bun 缺失、指定 session 离线或 SSH 转发受限时显示错误；可以在电脑补齐环境后重试，或继续使用独立 bridge 的手动连接方式。远端若使用自定义 `MOBILE_HERDR_STATE`，须让 SSH 环境提供相同值，才能读取该目录中的原生实例。
+
+## 4. 继续现有会话
 
 打开会话列表，选择原有 session、工作区和 pane。普通会话可查看聊天记录及原始终端；缺少 transcript 身份时需要明确选择记录，不按最近修改时间猜测。聊天记录无法识别时，可先使用“终端”。
 
@@ -88,7 +100,7 @@ mherdr pi --session <完整会话-ID或路径>
 
 Codex 暂不支持 `--profile` / `--worktree`、最近会话选择器；可使用受支持的 `-c` 配置。特殊审批或 Pi 自定义终端组件仍需要电脑原界面。刷新、断网和关闭手机页面不会停止 agent；草稿保留，恢复后不会自动重发消息。
 
-## 4. 日常停止、升级与回退
+## 5. 日常停止、升级与回退
 
 - **仅停止 Web bridge**：在启动 bridge 的终端按 Ctrl+C。这不会结束已有 agent，也不会关闭 Herdr。当前先使用前台启动，不自动安装系统后台服务。
 - **结束本 pane 的 Codex 后台**：在该 pane 的 shell 中执行 `mherdr stop`。先完成任务并交还电脑；该命令会结束当前原生 agent。Pi 退出原 CLI 即结束实例。
@@ -99,7 +111,7 @@ Codex 暂不支持 `--profile` / `--worktree`、最近会话选择器；可使�
 
 设置了 `MOBILE_HERDR_STATE` 时，bridge、pair 和 Herdr 中的 `mherdr` 必须使用同一值。
 
-## 5. 帮忙验收与反馈
+## 6. 帮忙验收与反馈
 
 请至少尝试：扫码连接 → 选择原会话 → 发送一条自己需要的任务 → 手机 / 电脑交接 → 写草稿后刷新 → 断网再恢复。重点反馈真机键盘遮挡、中文输入法、返回键、锁屏和切后台后恢复。
 

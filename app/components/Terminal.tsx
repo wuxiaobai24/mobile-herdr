@@ -7,6 +7,6 @@ export default function Terminal({ machine, session, pane }: { machine: Machine;
     source={{ uri: machine.url + '/terminal.html' }} style={{ flex: 1, backgroundColor: '#101415' }}
     javaScriptEnabled originWhitelist={[machine.url]}
     onShouldStartLoadWithRequest={request => request.url === machine.url + '/terminal.html' || request.url === 'about:blank'}
-    injectedJavaScript={`window.dispatchEvent(new MessageEvent('message',{data:${JSON.stringify(JSON.stringify({ type: 'connect', token: machine.token, session, pane }))}}));true;`}
+    injectedJavaScript={`window.dispatchEvent(new MessageEvent('message',{data:${JSON.stringify(JSON.stringify({ type: 'connect', token: machine.token, machine: machine.remote, session, pane }))}}));true;`}
   /></View>;
 }

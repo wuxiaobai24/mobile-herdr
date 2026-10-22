@@ -82,6 +82,7 @@ export async function createRelease(outputDirectory = join(root, 'artifacts/rele
     for (const entry of ['server/index.ts', 'scripts/agent.ts', 'scripts/native-host.ts', 'scripts/pair.ts', 'scripts/install-agent.ts']) {
       await bundle(entry, join(destination, entry));
     }
+    await bundle('server/ssh-worker.ts', join(destination, 'server/ssh-worker.bundle.js'));
     // Pi loads this extension inside its Node process, not inside Bun.
     await bundle('plugins/pi/mobile-herdr.ts', join(destination, 'plugins/pi/mobile-herdr.ts'), 'node');
     await cp(join(root, 'dist'), join(destination, 'dist'), { recursive: true });

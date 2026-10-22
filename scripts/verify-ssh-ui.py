@@ -1,0 +1,108 @@
+"""Gateway/remote UI fixture; no user SSH credentials, hosts or agents are accessed."""
+import json
+import os
+from pathlib import Path
+from playwright.sync_api import sync_playwright, expect
+
+artifacts = Path('artifacts/ssh-ui')
+checks = []
+errors = []
+def check(name, condition=True):
+    assert condition, name
+    checks.append(name)
+def snapshot(page, name):
+    page.wait_for_function("() => document.getAnimations().filter(a => a.effect.getComputedTiming().iterations !== Infinity).every(a => a.playState !== 'running')")
+    page.screenshot(path=str(artifacts / name))
+
+with sync_playwright() as p:
+    browser = p.chromium.launch(executable_path='/usr/bin/chromium', headless=True, args=['--no-sandbox'])
+    context = browser.new_context(viewport={'width': 390, 'height': 844}, is_mobile=True, has_touch=True)
+    page = context.new_page()
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    page.goto(os.environ['MOBILE_HERDR_TEST_URL'])
+    page.get_by_label('连接密钥', exact=True).fill(os.environ['MOBILE_HERDR_TEST_TOKEN'])
+    page.get_by_label('连接开发机', exact=True).click()
+    composer = page.get_by_label('发给原会话的消息', exact=True)
+    expect(composer).to_be_visible()
+    composer.fill('本地 pane 的草稿')
+    expect(page.get_by_text('草稿已保存', exact=True)).to_be_visible()
+    page.get_by_label('管理开发机', exact=True).click()
+    expect(page.get_by_label('选择开发机 SSH 开发机', exact=True)).to_be_visible()
+    expect(page.get_by_label('选择开发机 SSH 已禁用', exact=True)).to_be_disabled()
+    expect(page.get_by_text('SSH 需要认证。请在开发机运行 herdr machine reconnect owned-auth。', exact=True)).to_be_visible()
+    snapshot(page, 'phone-machines.png')
+    check('Herdr SSH profiles appear automatically with online, auth and disabled states')
+    page.get_by_label('选择开发机 SSH 开发机', exact=True).click()
+    expect(page.get_by_text('remote-workspace', exact=True)).to_be_visible()
+    expect(page.get_by_text('电脑正在控制', exact=True)).to_be_visible()
+    expect(composer).to_have_value('')
+    composer.fill('远程 pane 的草稿')
+    page.wait_for_function("() => Object.values(localStorage).some(value => value.includes('远程 pane 的草稿'))")
+    failures = [0]
+    def unavailable_info(route):
+        if route.request.headers.get('x-herdr-machine') == 'ssh-owned-online' and failures[0] < 2:
+            failures[0] += 1
+            route.fulfill(status=503, content_type='application/json', body=json.dumps({'error': {'code': 'ssh_connecting', 'message': 'SSH fixture 正在重连'}}))
+        else:
+            route.continue_()
+    page.route('**/api/info', unavailable_info)
+    page.reload()
+    expect(page.get_by_text('remote-workspace', exact=True)).to_be_visible(timeout=15000)
+    expect(composer).to_have_value('远程 pane 的草稿')
+    expect(page.get_by_role('alert')).to_have_count(0)
+    check('startup metadata retries after SSH becomes available and clears the stale error', failures[0] == 2)
+    page.unroute('**/api/info', unavailable_info)
+    check('refresh restores the inherited machine and its own pane draft')
+    page.get_by_label('管理开发机', exact=True).click()
+    page.get_by_label('选择开发机 MacBook Pro', exact=True).click()
+    expect(composer).to_have_value('本地 pane 的草稿')
+    page.get_by_label('管理开发机', exact=True).click()
+    page.get_by_label('选择开发机 SSH 开发机', exact=True).click()
+    expect(composer).to_have_value('远程 pane 的草稿')
+    check('equal local and remote pane IDs retain independent drafts')
+    page.get_by_label('在手机继续', exact=True).click()
+    expect(page.get_by_text('你正在手机上继续', exact=True)).to_be_visible()
+    composer.fill('从手机继续远程任务')
+    page.get_by_label('发送消息', exact=True).click()
+    expect(page.get_by_text('已收到：从手机继续远程任务', exact=True)).to_be_visible()
+    snapshot(page, 'phone-remote-chat.png')
+    check('remote takeover and prompt use the selected gateway machine')
+    for width, height in [(320, 568), (390, 844), (844, 390)]:
+        page.set_viewport_size({'width': width, 'height': height})
+        page.wait_for_function("() => document.querySelector('[aria-label=\"发送消息\"]').getBoundingClientRect().bottom <= innerHeight + 1")
+        check(f'{width}x{height}: remote send remains reachable and page does not overflow', page.evaluate('document.documentElement.scrollWidth <= innerWidth'))
+    page.set_viewport_size({'width': 390, 'height': 844})
+    composer.fill('SSH 断线保留的草稿')
+    composer.focus()
+    page.evaluate("Object.defineProperty(visualViewport, 'height', {value: 450, configurable: true}); visualViewport.dispatchEvent(new Event('resize'))")
+    page.wait_for_function("() => document.querySelector('[aria-label=\"发送消息\"]').getBoundingClientRect().bottom <= 451")
+    snapshot(page, 'phone-remote-keyboard.png')
+    check('remote keyboard viewport keeps takeover and draft controls visible')
+    page.evaluate("delete visualViewport.height; visualViewport.dispatchEvent(new Event('resize'))")
+    composer.blur()
+    context.set_offline(True)
+    expect(page.get_by_label('发送消息', exact=True)).to_be_disabled()
+    context.set_offline(False)
+    expect(page.get_by_label('发送消息', exact=True)).to_be_enabled(timeout=15000)
+    expect(composer).to_have_value('SSH 断线保留的草稿')
+    expect(page.get_by_test_id('conversation-content').get_by_text('SSH 断线保留的草稿', exact=True)).to_have_count(0)
+    check('reconnect preserves the remote draft without automatically sending it')
+    page.get_by_label('交还电脑', exact=True).click()
+    expect(page.get_by_text('电脑正在控制', exact=True)).to_be_visible()
+    check('remote handoff returns control to its original desktop')
+    page.get_by_role('tab', name='终端', exact=True).click()
+    # Transport routing and PTY input are covered by the isolated OpenSSH test.
+    page.get_by_role('tab', name='对话', exact=True).click()
+    expect(composer).to_have_value('SSH 断线保留的草稿')
+    check('switching remote chat and terminal preserves the draft')
+    page.get_by_label('管理开发机', exact=True).click()
+    page.get_by_label('选择开发机 SSH 待认证', exact=True).click()
+    expect(page.get_by_label('重新连接开发机', exact=True)).to_be_visible()
+    expect(page.get_by_label('发给原会话的消息', exact=True)).to_have_count(0)
+    check('an unavailable SSH machine never leaves a writable local pane selected')
+    check('no uncaught browser errors', not errors)
+    context.close()
+    browser.close()
+
+(artifacts/'verification.json').write_text(json.dumps({'checks':checks,'errors':errors}, ensure_ascii=False, indent=2))
+print(f'SSH machine browser verification: {len(checks)} checks passed; 0 uncaught errors.')

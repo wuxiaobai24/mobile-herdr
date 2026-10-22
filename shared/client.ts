@@ -11,12 +11,13 @@ export function normalizeUrl(value: string): string {
   return url.origin;
 }
 export function websocketUrl(machine: Machine, path: string): string { return machine.url.replace(/^http/, 'ws') + path; }
+export function machineScope(machine: Machine): string { return machine.remote ? `${machine.url}::${machine.remote}` : machine.url; }
 export async function api<T>(machine: Machine, path: string, options?: { body: object; id?: string }): Promise<T> {
   let response: Response;
   try {
     response = await fetch(machine.url + path, {
       method: options ? 'POST' : 'GET',
-      headers: { Authorization: `Bearer ${machine.token}`, ...(options ? { 'Content-Type': 'application/json', 'X-Request-ID': options.id ?? requestId() } : {}) },
+      headers: { Authorization: `Bearer ${machine.token}`, ...(machine.remote ? { 'X-Herdr-Machine': machine.remote } : {}), ...(options ? { 'Content-Type': 'application/json', 'X-Request-ID': options.id ?? requestId() } : {}) },
       body: options ? JSON.stringify(options.body) : undefined,
       signal: AbortSignal.timeout(15000),
     });
@@ -45,7 +46,7 @@ export function watch(machine: Machine, session: string, pane: string | undefine
     onStatus('connecting');
     socket = new WebSocket(websocketUrl(machine, '/api/watch'));
     let reason: string | undefined;
-    socket.onopen = () => socket?.send(JSON.stringify({ type: 'auth', token: machine.token, session, pane }));
+    socket.onopen = () => socket?.send(JSON.stringify({ type: 'auth', token: machine.token, machine: machine.remote, session, pane }));
     socket.onmessage = event => {
       if (closed) return;
       try {

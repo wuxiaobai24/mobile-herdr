@@ -90,3 +90,14 @@ Oil UI 版本检查记录：使用 0.18.1，提示可更新至 0.23.9，本任�
 - 测试只创建自己的临时文件、fixture socket、bridge 与 provider 替身。未安装或更新本机已有 mherdr，未重启或升级用户的 Herdr，未向用户的 agent 提交测试消息。运行包使用明确的入口清单，附 SHA-256、来源 manifest 和第三方许可文件。
 - `bun run typecheck`、`bun test tests`（18 通过、3 跳过、98 次断言）、重建静态资源后的 `bun run test:ui`（31 + 20 项、0 uncaught errors）及 `git diff --check` 通过。未在本轮重跑真实 Herdr / Codex / Pi 集成测试。
 - 产物与按实际压缩包 SHA-256 关联的检查清单位于 `artifacts/releases/`。指南见 `docs/beta-guide.md`，维护者流程见 `docs/releasing.md`。当前仅准备本地私人内测包，未上传、创建公开仓库或发布到 npm；macOS / ARM64 与真实手机仍待验收。
+
+## Herdr SSH 自动发现（0.2.2-beta.2，2026-10-22）
+
+- 根因分为两项：旧版仅支持手动保存 bridge endpoint，没有读取 Herdr SSH profiles；现场入口仍是 0.2.1，且该进程环境中的 `herdr machine list --json` 返回空列表。用户确认 profiles 实际保存在另一台电脑，需在那台电脑运行入口，或由用户明确配置当前入口账号的机器目录。未自动复制其他电脑的配置。
+- 新增入口侧自动发现、连接、状态和 SSH 转发。远端通过 Bun 临时执行 bundled bridge，只使用已运行的 Herdr；不执行 `machine add`、安装、升级、启动或停止 Herdr，不创建第二份 provider。凭证经 SSH stdin 和内部 WebSocket / HTTP auth 传输，不写入 URL、日志、发布包或浏览器的远端 token 配置。
+- `bun run typecheck`、`MOBILE_HERDR_SSH_LIVE=1 bun test tests`：**21 通过、3 跳过、0 失败，124 次断言**。跳过的是独立真实 Herdr 与安装版 Codex / Pi provider 的既有 opt-in 检查。
+- 新增 3 项后端测试覆盖 profiles 校验、改名不重连、目标 / session 指纹、禁用移除、目录读取失败保留已有连接、同名 pane 与请求回执隔离，以及真实 OpenSSH 路径。真实 SSH 使用临时 sshd、host/client keys、known_hosts、受限测试环境和 fixture socket，仅连接 loopback。临时服务的 StrictModes 为适配 `/tmp` 所有权路径而关闭；生产客户端始终使用 `StrictHostKeyChecking=yes` / `BatchMode=yes`，不改变用户 sshd 或 SSH 配置。
+- OpenSSH 端到端验证临时 worker、原生消息与去重、原始终端收发；断开后原生运行实例和电脑输入权不变，未触碰用户已有主机或密钥。
+- `bun run test:release`：**20 项通过**，含预构建 SSH worker 随包分发；该测试关闭真实 machine 发现，避免连接运行测试者的主机。`bun run test:ui` 在重建静态资源后 **31 + 20 + 14 = 65 项通过，0 uncaught errors**。
+- 新增浏览器检查覆盖自动显示 online / auth / disabled profiles、初始连接失败后的元信息重试和错误清除、刷新恢复远程选择、同名 pane 草稿隔离、原生接管 / 交还、离线不重放、待认证目标不保留本地可写 pane，以及 320px、390px、横屏和 450px visualViewport。证据为 `artifacts/ssh-ui/`。
+- 仍未在用户另一台电脑的实际 SSH profiles、macOS / ARM64 或真实手机上验收；远端需 Bun 1.4+、可发现的 Herdr CLI、运行中的 protocol 22 session 与可用的 Unix socket 转发。失败明确提示，不自动处理认证或部署依赖。停用 SSH 转发不会停止原生 agent；临时 bridge 无活动约 35–40 秒退出。

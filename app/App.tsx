@@ -3,9 +3,9 @@ import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, Sc
 import AppStatusBar from './components/AppStatusBar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, ArrowRight, Bell, Check, ChevronDown, ChevronRight, CircleHelp, Folder, Layers2, Menu, MessageSquare, Monitor, Plus, RefreshCw, Search, Server, TerminalSquare, Trash2, Wifi, X } from 'lucide-react-native';
-import type { BridgeInfo, Machine, Pane } from '../shared/protocol';
+import type { BridgeInfo, HerdrMachine, Machine, Pane } from '../shared/protocol';
 import { statusLabel } from '../shared/protocol';
-import { connect } from '../shared/client';
+import { ApiError, api, connect, machineScope } from '../shared/client';
 import { colors, mono, styles } from './theme';
 import { loadMachines, saveMachines, loadDraft, saveDraft } from './storage';
 import { useConnection } from './useConnection';
@@ -69,6 +69,8 @@ function Workbench(): React.JSX.Element {
   const compact = !desktop && (keyboardVisible || height < 560);
   const [pairing] = useState(consumePairing);
   const [machines, setMachines] = useState<Machine[]>([]);
+  const [inherited, setInherited] = useState<Machine[]>([]);
+  const [catalogError, setCatalogError] = useState('');
   const [activeId, setActiveId] = useState('');
   const [info, setInfo] = useState<BridgeInfo>();
   const [session, setSession] = useState('default');
@@ -86,7 +88,8 @@ function Workbench(): React.JSX.Element {
   const [noticeError, setNoticeError] = useState(false);
   const [help, setHelp] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const machine = machines.find(item => item.id === activeId);
+  const allMachines = [...machines, ...inherited.filter(item => machines.some(parent => parent.id === item.parentId))];
+  const machine = allMachines.find(item => item.id === activeId);
   const connection = useConnection(machine, session, paneId);
   const snapshot = connection.snapshot;
   const originalPane = snapshot?.panes.find(item => item.pane_id === paneId);
@@ -100,21 +103,64 @@ function Workbench(): React.JSX.Element {
 
   function notify(text: string, error = false): void { setNotice(text); setNoticeError(error); }
   useEffect(() => {
-    void Promise.all([loadMachines(), loadDraft('active-machine')]).then(([saved, active]) => { setMachines(saved); setActiveId(saved.find(item => item.id === active)?.id ?? saved[0]?.id ?? ''); setShowConnect(!!pairing || !saved.length); }).catch(() => { setShowConnect(true); notify('无法读取已保存的开发机。', true); }).finally(() => setLoaded(true));
+    void Promise.all([loadMachines(), loadDraft('active-machine')]).then(([saved, active]) => { setMachines(saved); setActiveId(saved.some(item => active === item.id || active.startsWith(item.id + '::ssh-')) ? active : saved[0]?.id ?? ''); setShowConnect(!!pairing || !saved.length); }).catch(() => { setShowConnect(true); notify('无法读取已保存的开发机。', true); }).finally(() => setLoaded(true));
   }, []);
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function refresh(): Promise<void> {
+      const results = await Promise.all(machines.map(async parent => {
+        try {
+          const result = await api<{ machines: HerdrMachine[]; error?: string }>(parent, '/api/machines');
+          if (!Array.isArray(result.machines)) throw new Error('无效的 Herdr machine 列表。');
+          return { parent, result };
+        } catch (error) { return { parent, error: error instanceof ApiError && error.code === 'not_found' ? '' : '部分开发机暂时无法读取 Herdr machine 列表。' }; }
+      }));
+      if (cancelled) return;
+      setCatalogError(results.map(row => row.result?.error ?? row.error ?? '').filter(Boolean).join(' '));
+      setInherited(previous => {
+        const next: Machine[] = [];
+        for (const { parent, result } of results) {
+          if (!result) { next.push(...previous.filter(item => item.parentId === parent.id)); continue; }
+          for (const remote of result.machines) next.push({ id: `${parent.id}::${remote.id}`, parentId: parent.id, remote: remote.id,
+            name: remote.name, url: parent.url, token: parent.token, remoteStatus: remote.status, remoteError: remote.error, remoteSession: remote.session });
+          const selected = previous.find(item => item.id === activeId && item.parentId === parent.id);
+          if (selected && !next.some(item => item.id === selected.id)) next.push({ ...selected, remoteStatus: 'disabled', remoteError: '此 Herdr machine 已移除或更换目标，请选择其他机器。' });
+        }
+        return JSON.stringify(previous) === JSON.stringify(next) ? previous : next;
+      });
+      timer = setTimeout(() => void refresh(), 5000);
+    }
+    void refresh();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [machines, activeId]);
   useEffect(() => {
     if (!machine) return;
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let attempts = 0;
+    let lastError = '';
     setConnecting(true); setRestoring(true); setInfo(undefined); setPaneId(undefined); setSession('default');
-    void Promise.all([connect(machine), loadDraft(`location:${machine.url}`)]).then(([result, saved]) => {
-      if (cancelled) return;
-      let location: { session?: string; pane?: string } = {};
-      try { location = JSON.parse(saved || '{}'); } catch { /* Use the first available session. */ }
-      const next = result.sessions.find(item => item.id === location.session)?.id ?? result.sessions[0]?.id ?? 'default';
-      setInfo(result); setSession(next); setPaneId(next === location.session && typeof location.pane === 'string' ? location.pane : undefined);
-    }).catch(error => { if (!cancelled) notify(error.message, true); }).finally(() => { if (!cancelled) { setConnecting(false); setRestoring(false); } });
-    return () => { cancelled = true; };
-  }, [machine?.id]);
+    const savedLocation = loadDraft(`location:${machineScope(machine)}`).catch(() => '');
+    async function restore(): Promise<void> {
+      try {
+        const [result, saved] = await Promise.all([connect(machine!), savedLocation]);
+        if (cancelled) return;
+        let location: { session?: string; pane?: string } = {};
+        try { location = JSON.parse(saved || '{}'); } catch { /* Use the first available session. */ }
+        const next = result.sessions.find(item => item.id === location.session)?.id ?? result.sessions[0]?.id ?? 'default';
+        setInfo(result); setSession(next); setPaneId(next === location.session && typeof location.pane === 'string' ? location.pane : undefined);
+        setConnecting(false); setRestoring(false); setNotice(previous => previous === lastError ? '' : previous);
+      } catch (error) {
+        if (cancelled) return;
+        lastError = error instanceof Error ? error.message : '无法连接开发机。';
+        notify(lastError, true); setConnecting(false);
+        if (!(error instanceof ApiError && error.code === 'unauthorized')) timer = setTimeout(() => void restore(), Math.min(15000, 750 * 2 ** Math.min(attempts++, 5)));
+      }
+    }
+    void restore();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [machine?.id, machine?.url, machine?.token, machine?.remote]);
   useEffect(() => {
     if (!snapshot || restoring) return;
     if (!snapshot.panes.some(item => item.pane_id === paneId)) {
@@ -124,7 +170,7 @@ function Workbench(): React.JSX.Element {
   }, [snapshot, paneId, restoring]);
   useEffect(() => {
     if (!machine || restoring || !paneId || !snapshot?.panes.some(item => item.pane_id === paneId)) return;
-    void Promise.all([saveDraft('active-machine', machine.id), saveDraft(`location:${machine.url}`, JSON.stringify({ session, pane: paneId }))]).catch(() => notify('无法保存上次打开的会话。', true));
+    void Promise.all([saveDraft('active-machine', machine.id), saveDraft(`location:${machineScope(machine)}`, JSON.stringify({ session, pane: paneId }))]).catch(() => notify('无法保存上次打开的会话。', true));
   }, [machine?.id, machine?.url, session, paneId, restoring, !!snapshot]);
   useEffect(() => { if (!notice || noticeError) return; const timer = setTimeout(() => setNotice(''), 4500); return () => clearTimeout(timer); }, [notice, noticeError]);
 
@@ -183,7 +229,7 @@ function Workbench(): React.JSX.Element {
         <View style={{ flex: 1, minWidth: 0, backgroundColor: colors.bg }}>
           <View style={[styles.row, { height: desktop ? 69 : compact ? 54 : 60, paddingHorizontal: desktop ? 26 : 10, gap: 8, borderBottomWidth: 1, borderColor: colors.line }]}>
             {!desktop && <IconButton label="打开会话列表" onPress={() => setDrawer(true)}><Menu size={21} color={colors.text} /></IconButton>}
-            <View style={{ flex: 1, gap: 3 }}><View style={[styles.row, { gap: 8 }]}><Text numberOfLines={1} style={{ color: colors.text, fontSize: 15, fontWeight: '600', flexShrink: 1 }}>{workspace?.label ?? 'Mobile Herdr'}</Text>{desktop && <><ChevronRight size={13} color={colors.dim} /><Text style={[styles.muted, { fontFamily: mono }]}>{pane?.pane_id ?? '选择会话'}</Text></>}</View>{desktop ? <Text numberOfLines={1} style={[styles.muted, { fontSize: 12, fontFamily: mono }]}>{pane?.foreground_cwd ?? pane?.cwd ?? '你的开发机，随身继续'}</Text> : <View style={[styles.row, { gap: 4 }]}><Text numberOfLines={1} style={[styles.muted, { fontSize: 12, flexShrink: 1 }]}>{machine ? `${machine.name} · ${session}` : '你的开发机，随身继续'}</Text>{pane && <Text style={[styles.muted, { fontSize: 12, fontFamily: mono }]}>· {pane.pane_id}</Text>}</View>}</View>
+            <View style={{ flex: 1, gap: 3 }}><View style={[styles.row, { gap: 8 }]}><Text numberOfLines={1} style={{ color: colors.text, fontSize: 15, fontWeight: '600', flexShrink: 1 }}>{workspace?.label ?? 'Mobile Herdr'}</Text>{desktop && <><ChevronRight size={13} color={colors.dim} /><Text style={[styles.muted, { fontFamily: mono }]}>{pane?.pane_id ?? '选择会话'}</Text></>}</View>{desktop ? <Text numberOfLines={1} style={[styles.muted, { fontSize: 12, fontFamily: mono }]}>{pane?.foreground_cwd ?? pane?.cwd ?? '你的开发机，随身继续'}</Text> : <View style={[styles.row, { gap: 4 }]}><Text numberOfLines={1} style={[styles.muted, { fontSize: 12, flexShrink: 1 }]}>{machine ? `${machine.name} · ${machine.remoteSession ?? session}` : '你的开发机，随身继续'}</Text>{pane && <Text style={[styles.muted, { fontSize: 12, fontFamily: mono }]}>· {pane.pane_id}</Text>}</View>}</View>
             {desktop && <View style={[styles.row, { gap: 13, marginRight: 12 }]}><Text style={styles.muted}>{counts.working} 工作中</Text><Pressable onPress={() => setAttention(!attention)}><Text style={{ color: counts.blocked ? colors.amber : colors.muted, fontSize: 13 }}>{counts.blocked} 需要你</Text></Pressable></View>}
             <View accessibilityLabel={`连接状态：${connectionLabel}`} style={[styles.row, { gap: 6, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.surface }]}><Dot status={online ? 'working' : 'blocked'} /><Text style={{ color: online ? colors.accent : colors.amber, fontSize: 12 }}>{connectionLabel}</Text></View>
           </View>
@@ -208,8 +254,12 @@ function Workbench(): React.JSX.Element {
     {!desktop && <Modal visible={drawer} animationType="slide" onRequestClose={() => setDrawer(false)}><SafeAreaView style={{ flex: 1, backgroundColor: colors.sidebar }}>{sidebar}</SafeAreaView></Modal>}
     <Modal visible={machinePanel} transparent animationType="fade" onRequestClose={() => setMachinePanel(false)}><ScrollView keyboardShouldPersistTaps="handled" style={{ flex: 1, backgroundColor: '#070b0bdc' }} contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}><View style={{ width: '100%', maxWidth: 460, backgroundColor: colors.sidebar, borderWidth: 1, borderColor: colors.line, padding: 24, borderRadius: 14, gap: 20 }}>
       <View style={[styles.row, { justifyContent: 'space-between' }]}><Text style={{ color: colors.text, fontSize: 21, fontWeight: '600' }}>开发机</Text><IconButton label="关闭开发机列表" onPress={() => setMachinePanel(false)}><X size={20} color={colors.muted} /></IconButton></View>
-      <Text style={styles.muted}>每台机器保留自己的 session。点击即可切换。</Text>
-      {machines.map(item => <View key={item.id} style={[styles.row, { gap: 10, borderBottomWidth: 1, borderColor: colors.line, paddingBottom: 16 }]}><Pressable onPress={() => { setActiveId(item.id); setMachinePanel(false); setDrawer(false); }} style={[styles.row, { flex: 1, gap: 12 }]}><Monitor size={20} color={activeId === item.id ? colors.accent : colors.muted} /><View style={{ flex: 1 }}><Text style={styles.text}>{item.name}</Text><Text style={[styles.muted, { fontSize: 12, fontFamily: mono }]}>{item.url}</Text></View>{activeId === item.id && <Check size={16} color={colors.accent} />}</Pressable><IconButton label={`移除 ${item.name}`} onPress={() => removeMachine(item.id)}><Trash2 size={16} color={colors.dim} /></IconButton></View>)}
+      <Text style={styles.muted}>Herdr 中启用的 SSH 机器会自动发现并连接。点击机器切换会话。</Text>{!!catalogError && <Text style={{ color: colors.amber, fontSize: 13, lineHeight: 21 }}>{catalogError}</Text>}
+      {!inherited.length && !catalogError && <Text style={styles.muted}>未发现 SSH 机器？请在运行 bridge 的开发机、同一账号下检查 herdr machine list --json。其他电脑保存的机器不会自动同步。</Text>}
+      {allMachines.map(item => <View key={item.id} style={{ gap: 8, borderBottomWidth: 1, borderColor: colors.line, paddingBottom: 16 }}>
+        <View style={[styles.row, { gap: 10 }]}><Pressable accessibilityRole="button" accessibilityLabel={`选择开发机 ${item.name}`} disabled={item.remoteStatus === 'disabled'} onPress={() => { setActiveId(item.id); setMachinePanel(false); setDrawer(false); }} style={[styles.row, { flex: 1, minHeight: 48, gap: 12, opacity: item.remoteStatus === 'disabled' ? 0.5 : 1 }]}><Monitor size={20} color={activeId === item.id ? colors.accent : colors.muted} /><View style={{ flex: 1, gap: 3 }}><Text style={styles.text}>{item.name}</Text><Text style={[styles.muted, { fontSize: 12 }]}>{item.remote ? `Herdr SSH · ${item.remoteSession} · ${{ connecting: '连接中', online: '已连接', offline: '已断开', disabled: '已禁用' }[item.remoteStatus ?? 'offline']}` : item.url}</Text></View>{activeId === item.id && <Check size={16} color={colors.accent} />}</Pressable>{!item.remote && <IconButton label={`移除 ${item.name}`} onPress={() => removeMachine(item.id)}><Trash2 size={16} color={colors.dim} /></IconButton>}</View>
+        {!!item.remoteError && <Text style={{ color: colors.amber, fontSize: 13, lineHeight: 21 }}>{item.remoteError}</Text>}
+      </View>)}
       <Pressable onPress={() => { setMachinePanel(false); setShowConnect(true); }} style={styles.button}><Plus size={17} color={colors.accentInk} /><Text style={styles.buttonText}>添加开发机</Text></Pressable>
     </View></ScrollView></Modal>
     <Modal visible={help} transparent animationType="fade" onRequestClose={() => setHelp(false)}><ScrollView style={{ flex: 1, backgroundColor: '#070b0bdc' }} contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}><View style={{ maxWidth: 440, width: '100%', backgroundColor: colors.sidebar, padding: 26, gap: 18, borderRadius: 14, borderWidth: 1, borderColor: colors.line }}><Text style={{ color: colors.text, fontSize: 21 }}>继续同一个 Herdr</Text><Text style={styles.text}>开发机 → session → workspace → tab → pane。这里读取相同的 session，消息直接发给原 pane 中的 agent。</Text><Text style={styles.muted}>聊天记录优先使用 Herdr 上报的 session 标识。没有标识时，需要选择对应记录。对话和终端可以随时切换。</Text><Text style={styles.muted}>网络断开后会自动重连。草稿保留在当前设备，消息不会自动重发。离开页面或关闭客户端不会停止 agent。</Text><Pressable style={styles.button} onPress={() => setHelp(false)}><Text style={styles.buttonText}>知道了</Text></Pressable></View></ScrollView></Modal>

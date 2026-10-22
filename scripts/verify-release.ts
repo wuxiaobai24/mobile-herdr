@@ -48,12 +48,13 @@ try {
   const env: NodeJS.ProcessEnv = { ...process.env, MOBILE_HERDR_BUN: process.execPath, MOBILE_HERDR_STATE: join(directory, 'bridge-state'),
     MOBILE_HERDR_HOST: '127.0.0.1', MOBILE_HERDR_PORT: '0', MOBILE_HERDR_SOCKET: fixture.config.socket,
     HERDR_SOCKET: fixture.config.socket, HERDR_SOCKET_PATH: fixture.config.socket, HERDR_PANE_ID: fixture.snapshot.panes[0].pane_id,
-    MOBILE_HERDR_ORIGINS: '', MOBILE_HERDR_HERDR_HOME: join(directory, 'empty-herdr'),
+    MOBILE_HERDR_ORIGINS: '', MOBILE_HERDR_HERDR_HOME: join(directory, 'empty-herdr'), MOBILE_HERDR_SSH_DISCOVERY: '0',
   };
   delete env.MOBILE_HERDR_TOKEN;
   const help = await run([wrapper, '--help'], env, directory);
   const reported = await run([wrapper, '--version'], env, directory);
   check('packaged command runs from outside its directory', help.code === 0 && reported.stdout.trim() === version);
+  check('runtime includes the bundled SSH worker without build dependencies', entries.includes('server/ssh-worker.bundle.js'));
   const binDirectory = join(directory, 'custom bin');
   const install = await run([wrapper, 'install-agent', '--bin-dir', binDirectory], env, directory);
   const installed = await run([join(binDirectory, 'mherdr'), '--version'], env, directory);

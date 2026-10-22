@@ -8,15 +8,18 @@ import type { NativeAction, NativeState } from '../shared/native';
 import { findNative, nativeCall } from './native/registry';
 import { isDesktopReclaim } from '../shared/terminal-keys';
 import { version } from '../package.json';
+import type { RemoteGateway } from './ssh-machines';
 
 interface SocketData {
   kind: 'watch' | 'terminal'; authenticated: boolean; timer?: ReturnType<typeof setInterval>;
   deadline?: ReturnType<typeof setTimeout>; process?: Bun.Subprocess; closed?: boolean;
   nativeEndpoint?: string;
+  remote?: WebSocket;
+  remoteRouting?: boolean;
 }
 const SAFE_KEYS = new Set(['enter', 'esc', 'up', 'down', 'left', 'right', 'tab', 'ctrl+c', 'ctrl+d', 'ctrl+l', 'backspace']);
 
-export function createBridge(config: BridgeConfig): Bun.Server<SocketData> {
+export function createBridge(config: BridgeConfig, options: { remotes?: RemoteGateway; unix?: string; onActivity?: () => void } = {}): Bun.Server<SocketData> {
   const transcripts = new Transcripts(config);
   const publicDir = resolve(import.meta.dir, '../dist');
   const mutationResults = new Map<string, { at: number; promise: Promise<unknown> }>();
@@ -59,7 +62,7 @@ export function createBridge(config: BridgeConfig): Bun.Server<SocketData> {
     if (origin && allowedOrigin(config, request)) {
       headers.set('access-control-allow-origin', origin);
       headers.set('vary', 'Origin');
-      headers.set('access-control-allow-headers', 'Authorization, Content-Type, X-Request-ID');
+      headers.set('access-control-allow-headers', 'Authorization, Content-Type, X-Request-ID, X-Herdr-Machine');
       headers.set('access-control-allow-methods', 'GET, POST, OPTIONS');
     }
     return Response.json(value, { status, headers });
@@ -83,7 +86,7 @@ export function createBridge(config: BridgeConfig): Bun.Server<SocketData> {
     const id = request.headers.get('x-request-id');
     if (!id || !/^[a-zA-Z0-9_-]{8,128}$/.test(id)) throw new BridgeError('request_id_required', '写入操作需要唯一的请求 ID。', 400);
     const content = await request.clone().text();
-    const key = `${id}:${new URL(request.url).pathname}:${new URL(request.url).search}:${Bun.hash(content)}`;
+    const key = `${request.headers.get('x-herdr-machine') ?? 'local'}:${id}:${new URL(request.url).pathname}:${new URL(request.url).search}:${Bun.hash(content)}`;
     const existing = mutationResults.get(key);
     if (existing) return existing.promise;
     for (const [key, value] of mutationResults) if (Date.now() - value.at > 300000) mutationResults.delete(key);
@@ -94,8 +97,9 @@ export function createBridge(config: BridgeConfig): Bun.Server<SocketData> {
   }
 
   const server = Bun.serve<SocketData>({
-    hostname: config.host, port: config.port, maxRequestBodySize: 65536, idleTimeout: 60,
+    ...(options.unix ? { unix: options.unix } : { hostname: config.host, port: config.port, idleTimeout: 60 }), maxRequestBodySize: 65536,
     async fetch(request, server) {
+      options.onActivity?.();
       const url = new URL(request.url);
       if (url.pathname.startsWith('/api/')) {
         if (!allowedOrigin(config, request)) return response(request, { error: { code: 'origin_denied', message: '此客户端来源未获允许。' } }, 403);
@@ -106,6 +110,23 @@ export function createBridge(config: BridgeConfig): Bun.Server<SocketData> {
         }
         if (!validToken(config, request.headers.get('authorization')?.replace(/^Bearer /, '') ?? '')) return response(request, { error: { code: 'unauthorized', message: '连接密钥无效，请重新连接开发机。' } }, 401);
         try {
+          const machineId = request.headers.get('x-herdr-machine');
+          if (machineId) {
+            async function forward(): Promise<{ status: number; value: unknown }> {
+              const endpoint = options.remotes?.destination(machineId!);
+              if (!endpoint) throw new BridgeError('ssh_unavailable', '此 bridge 尚未启用 Herdr SSH machine。', 409);
+              const headers = new Headers({ Authorization: `Bearer ${endpoint.token}` });
+              for (const key of ['content-type', 'x-request-id']) { const value = request.headers.get(key); if (value) headers.set(key, value); }
+              try {
+                const result = await fetch(endpoint.url + url.pathname + url.search, { method: request.method, headers,
+                  body: ['GET', 'HEAD'].includes(request.method) ? undefined : await request.clone().text(), signal: AbortSignal.timeout(20000), redirect: 'error' });
+                return { status: result.status, value: await result.json() };
+              } catch { throw new BridgeError('ssh_delivery_unknown', request.method === 'POST' ? 'SSH 连接中断，操作可能已经送达。草稿已保留；请检查原会话后再决定是否重发。' : 'SSH 连接已断开，正在重连。', 502); }
+            }
+            const result = request.method === 'POST' ? await mutate(request, forward) as { status: number; value: unknown } : await forward();
+            return response(request, result.value, result.status);
+          }
+          if (request.method === 'GET' && url.pathname === '/api/machines') return response(request, options.remotes ? await options.remotes.list() : { machines: [] });
           if (request.method === 'GET' && url.pathname === '/api/info') {
             return response(request, { name: config.name, version, nativeProtocols: ['codex-app-server', 'pi-extension'], sessions: (await sessions(config)).map(({ socket: _, ...session }) => session) });
           }
@@ -175,6 +196,11 @@ export function createBridge(config: BridgeConfig): Bun.Server<SocketData> {
       async message(ws, message) {
         try {
           if (ws.data.authenticated) {
+            if (ws.data.remoteRouting) {
+              if (ws.data.remote && ws.data.remote.bufferedAmount > 1024 * 1024) { ws.close(1013, 'slow_ssh'); return; }
+              if (ws.data.remote?.readyState === WebSocket.OPEN) ws.data.remote.send(message);
+              return;
+            }
             if (ws.data.kind !== 'terminal' || !ws.data.process?.terminal) return;
             const input = JSON.parse(String(message));
             if (ws.data.nativeEndpoint && input.type === 'input') {
@@ -192,6 +218,26 @@ export function createBridge(config: BridgeConfig): Bun.Server<SocketData> {
           if (hello.type !== 'auth' || typeof hello.token !== 'string' || !validToken(config, hello.token)) { ws.close(1008, 'unauthorized'); return; }
           ws.data.authenticated = true;
           clearTimeout(ws.data.deadline);
+          if (hello.machine !== undefined) {
+            if (typeof hello.machine !== 'string') throw new BridgeError('invalid_machine', '无效的 Herdr machine。', 400);
+            ws.data.remoteRouting = true;
+            const endpoint = options.remotes?.destination(hello.machine);
+            if (!endpoint) throw new BridgeError('ssh_unavailable', '此 bridge 尚未启用 Herdr SSH machine。', 409);
+            const upstream = new WebSocket(endpoint.url.replace(/^http/, 'ws') + (ws.data.kind === 'terminal' ? '/api/terminal' : '/api/watch'));
+            ws.data.remote = upstream; upstream.binaryType = 'arraybuffer';
+            upstream.onopen = () => {
+              if (ws.data.closed) { upstream.close(); return; }
+              upstream.send(JSON.stringify({ ...hello, machine: undefined, token: endpoint.token }));
+            };
+            upstream.onmessage = event => {
+              if (ws.data.closed) return;
+              if (ws.getBufferedAmount() > 1024 * 1024) { ws.close(1013, 'slow_client'); return; }
+              ws.send(typeof event.data === 'string' ? event.data : new Uint8Array(event.data));
+            };
+            upstream.onclose = event => { if (!ws.data.closed) ws.close(event.code === 1008 ? 1011 : 1000, 'ssh_disconnected'); };
+            upstream.onerror = () => { if (!ws.data.closed) ws.close(1011, 'ssh_connection_failed'); };
+            return;
+          }
           const socket = await resolveSession(config, typeof hello.session === 'string' ? hello.session : 'default');
           const paneId = typeof hello.pane === 'string' ? hello.pane : undefined;
           if (ws.data.kind === 'terminal') {
@@ -250,6 +296,7 @@ export function createBridge(config: BridgeConfig): Bun.Server<SocketData> {
       },
       close(ws) {
         ws.data.closed = true;
+        ws.data.remote?.close();
         clearTimeout(ws.data.deadline); clearInterval(ws.data.timer);
         // Only the attach client is terminated; the Herdr pane and agent remain alive.
         ws.data.process?.kill(); ws.data.process?.terminal?.close();

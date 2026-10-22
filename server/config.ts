@@ -10,11 +10,11 @@ export interface BridgeConfig {
   herdrHome: string; socket?: string; stateDir: string;
   codexHome: string; claudeHome: string; piHome: string;
 }
-export async function loadConfig(): Promise<BridgeConfig> {
+export async function loadConfig(overrides: { token?: string } = {}): Promise<BridgeConfig> {
   const stateDir = process.env.MOBILE_HERDR_STATE ?? join(homedir(), '.local/state/mobile-herdr');
   await mkdir(stateDir, { recursive: true, mode: 0o700 });
   const tokenPath = join(stateDir, 'token');
-  let token = process.env.MOBILE_HERDR_TOKEN;
+  let token = overrides.token ?? process.env.MOBILE_HERDR_TOKEN;
   if (!token) {
     try { token = (await readFile(tokenPath, 'utf8')).trim(); }
     catch (error) {

@@ -40,7 +40,7 @@ Herdr 已经承担进程持久化、agent 状态检测、终端布局和远程 S
 
 浏览器连接每台开发机上的 Bun bridge（HTTP / WebSocket），bridge 连接该机已有的 Herdr Unix socket。原始终端通过 Bun PTY 运行 attach client。Bridge 从本机的 agent 数据目录只读提取对话。
 
-每台开发机各运行一个 bridge。客户端保存多个 endpoint，在机器间切换，不把 SSH 私钥放进浏览器，也不依赖中心 relay。这个决定直接使用“开发机端口可以访问”的前提。它也意味着当前不会自动导入 Herdr 保存的 SSH machine profiles；远程主机需要自己的 bridge 与可达入口。
+初版每台开发机运行独立 bridge，客户端保存多个 endpoint。0.2.2-beta.2 补充入口 bridge 自动读取 Herdr SSH profiles：在开发机复用 OpenSSH，远端以 Bun 临时执行 bridge 并转发私有 Unix socket，浏览器只访问入口。独立 bridge 模式继续可用。远端仍需 Bun 和已经运行的 Herdr；不自动部署或替换 Herdr，不把 SSH 私钥放进浏览器，也不依赖中心 relay。
 
 原生 transcript 的归一化模型只有 user / assistant / tool，不把终端文本猜成对话，不转发 system / developer 提示和隐藏推理。优先使用 Herdr 上报的精确 ID / path；缺失时展示该目录的候选记录让用户选择，同目录多个 agent 不自动猜。
 

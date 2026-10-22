@@ -4,7 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 const terminal = new Terminal({ cursorBlink: true, fontFamily: 'Menlo,Consolas,monospace', fontSize: 13, scrollback: 5000, allowProposedApi: false, theme: { background: '#101415', foreground: '#edf2ef', cursor: '#b8edcf' } });
 const fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(document.getElementById('terminal')!);
 let socket: WebSocket | undefined;
-let credentials: { token: string; session: string; pane: string } | undefined;
+let credentials: { token: string; session: string; pane: string; machine?: string } | undefined;
 let connected = false;
 const state = document.getElementById('state')!;
 function resize(): void { fit.fit(); if (connected) socket?.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows })); }
@@ -36,8 +36,9 @@ function receive(event: MessageEvent): void {
   let message;
   try { message = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch { return; }
   if (message?.type !== 'connect' || typeof message.token !== 'string' || typeof message.pane !== 'string' || typeof message.session !== 'string') return;
-  if (JSON.stringify(credentials) === JSON.stringify({ token: message.token, session: message.session, pane: message.pane })) return;
-  credentials = { token: message.token, session: message.session, pane: message.pane }; start();
+  const next = { token: message.token, session: message.session, pane: message.pane, machine: typeof message.machine === 'string' ? message.machine : undefined };
+  if (JSON.stringify(credentials) === JSON.stringify(next)) return;
+  credentials = next; start();
 }
 window.addEventListener('message', receive);
 // Android WebView's message event uses document; injected scripts use window.

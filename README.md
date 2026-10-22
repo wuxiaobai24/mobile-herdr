@@ -6,7 +6,7 @@
 
 ## 朋友内测
 
-当前准备版本为 **0.2.2-beta.1**。可以分发预构建运行包，接收方安装 Bun / Herdr 后解压启动，无需安装前端依赖或构建页面。首批仅 Linux x64 完成打包验证，其他平台与真实手机行为仍需验收。
+当前准备版本为 **0.2.2-beta.2**。可以分发预构建运行包，接收方安装 Bun / Herdr 后解压启动，无需安装前端依赖或构建页面。首批仅 Linux x64 完成打包验证，其他平台与真实手机行为仍需验收。
 
 - 使用者：[安装、配对、升级与回退](docs/beta-guide.md)
 - 维护者：[打包验证与发布步骤](docs/releasing.md)
@@ -97,7 +97,13 @@ Codex 普通命令 / 文件审批和结构化问题可以在 Chat 中处理；�
 
 ## 多台 remote machine
 
-每台开发机分别运行一个 bridge；在“开发机 → 添加开发机”里保存它的可达地址与密钥。所有终端、transcript、agent 凭证仍在对应的开发机。当前不自动导入 Herdr 的 SSH profiles，也不提供 relay 或 SSH 密钥管理。
+从 0.2.2-beta.2 起，bridge 会读取同一账号的 `herdr machine list --json`，自动发现并连接启用的 SSH machines，在“开发机”中显示连接、离线、认证和禁用状态。手机只需配对入口 bridge，不必逐台填写远端地址和密钥。新增连接不会切走当前机器，刷新后恢复上次选择。
+
+SSH 使用入口开发机上的 OpenSSH 配置、密钥和 agent；不会把 SSH 凭证发到浏览器。远端需要 **Bun 1.4+**、正在运行且支持 protocol 22 的 Herdr，以及可从 SSH 命令找到的 Herdr CLI。连接会通过 SSH stdin 传入临时 bridge 程序，用私有 Unix socket 转发；不安装远端包、不启动或替换 Herdr、不恢复第二份 agent。SSH 断开后临时 bridge 最迟约 40 秒清理，原生 agent 和 Herdr session 继续运行。
+
+需要认证时，在入口开发机运行页面提示的 `herdr machine reconnect <ID>`。远端 Bun 缺失、session 离线或 SSH 不允许 Unix socket 转发时会明确报错，不自动安装、接受新 host key 或重启服务。bridge 所在开发机的目录为空时不会跨电脑猜测 profiles；先以启动 bridge 的同一账号检查 `herdr machine list --json`。
+
+也可继续在每台开发机独立运行 bridge，并在“添加开发机”手动保存地址和密钥。所有终端、transcript、agent 凭证仍在对应的开发机；当前没有 relay 或 SSH 密钥管理。
 
 如果统一从 A 的 Web 页面访问 B 的 bridge，B 需显式允许 A 的网页 origin：
 
@@ -118,6 +124,8 @@ HTTPS 页面应连接 HTTPS / WSS bridge，避免浏览器拦截 mixed content�
 | `MOBILE_HERDR_STATE` | `~/.local/state/mobile-herdr` |
 | `MOBILE_HERDR_HERDR_HOME` | `~/.config/herdr`，用于发现 default / named sessions |
 | `MOBILE_HERDR_SOCKET` / `HERDR_SOCKET` | 固定使用一个 API socket，覆盖自动发现 |
+| `MOBILE_HERDR_SSH_DISCOVERY` | 默认开启；设为 `0` 关闭 Herdr SSH machine 自动发现 |
+| `MOBILE_HERDR_SSH_BINARY` | 可选的本地 SSH 可执行文件路径，默认 `ssh` |
 | `MOBILE_HERDR_ORIGINS` | 允许的额外浏览器 origins，逗号分隔；默认只允许同源 |
 | `CODEX_HOME` | `~/.codex` |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` |
@@ -138,6 +146,7 @@ bun test tests
 MOBILE_HERDR_LIVE=1 bun test tests    # 自动创建并清理独立 Herdr session
 MOBILE_HERDR_NATIVE_LIVE=1 bun test tests/live-native.test.ts # 本机 Codex / Pi + 本地模拟模型
 bun run test:handoff-live            # 独立真实 Herdr 中的 Codex 双向交接
+MOBILE_HERDR_SSH_LIVE=1 bun test tests/ssh.test.ts # 临时 sshd / 密钥与 fixture，不使用已有 SSH 主机
 bun run build
 bun run test:ui                     # 需要 uv、Python 3.12、Chromium
 ```

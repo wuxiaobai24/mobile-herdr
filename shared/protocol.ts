@@ -13,7 +13,8 @@ export interface Snapshot {
   focused_pane_id?: string;
 }
 export interface Session { id: string; name: string }
-export interface Machine { id: string; name: string; url: string; token: string }
+export interface Machine { id: string; name: string; url: string; token: string; remote?: string; parentId?: string; remoteStatus?: HerdrMachine['status']; remoteError?: string; remoteSession?: string }
+export interface HerdrMachine { id: string; name: string; session: string; status: 'connecting' | 'online' | 'offline' | 'disabled'; error?: string }
 export interface BridgeInfo { name: string; version: string; sessions: Session[] }
 export interface ChatMessage {
   id: string; role: 'user' | 'assistant' | 'tool'; text: string; timestamp?: string;

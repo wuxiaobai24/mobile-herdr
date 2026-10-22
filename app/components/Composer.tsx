@@ -4,13 +4,13 @@ import { ArrowUp, Check, Square, TerminalSquare } from 'lucide-react-native';
 import type { Machine, Pane } from '../../shared/protocol';
 import type { NativeState } from '../../shared/native';
 import type { NativeControl } from '../useNativeControl';
-import { ApiError, api, panePath, requestId } from '../../shared/client';
+import { ApiError, api, machineScope, panePath, requestId } from '../../shared/client';
 import { loadDraft, saveDraft } from '../storage';
 import { colors, styles } from '../theme';
 
 interface Props { machine: Machine; session: string; pane: Pane; online: boolean; compact?: boolean; native?: NativeState | null; control?: NativeControl; onError: (message: string) => void; onSent: () => void; onTerminal: () => void }
 export function Composer({ machine, session, pane, online, compact = false, native, control, onError, onSent, onTerminal }: Props): React.JSX.Element {
-  const key = `${machine.url}:${session}:${pane.pane_id}${native ? `:${native.runtimeId}:${native.conversationId ?? 'starting'}` : ''}`;
+  const key = `${machineScope(machine)}:${session}:${pane.pane_id}${native ? `:${native.runtimeId}:${native.conversationId ?? 'starting'}` : ''}`;
   const { width } = useWindowDimensions();
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);

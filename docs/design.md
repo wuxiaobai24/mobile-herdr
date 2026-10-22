@@ -37,3 +37,11 @@
 完成一轮独立存量润色评审，不打分。评审指出截图部分落在淡入中间帧，已改为等待有限动画结束后取图，并由主 Agent 复看最终截图；采纳原生空态文案减法。连接副标题保留，用于首次连接时说明用途。评审者只检查静态图，动效连续帧与减少动态效果由主 Agent 另验。小号 12px 文案仅用于机器、pane、草稿和连接等次级信息，正文与操作不依赖它；代码横向滚动用于保留命令，不造成整页横向溢出。
 
 基线：`artifacts/ui-before/`；新截图：`artifacts/ui/`、`artifacts/native-ui/`。`phone-detail-2x.png` 为 2 倍像素密度细节图。浏览器视口覆盖不等同于真实手机键盘、IME 或后台行为验收。
+
+## Herdr SSH machines（0.2.2-beta.2）
+
+开发机面板将手动添加的入口与继承的 Herdr SSH 机器放在同一列表，后者标注 `Herdr SSH`、远端 session 和连接状态，认证失败给出电脑侧处理命令，禁用项不可选择。继承条目在 Herdr 中管理，不在手机上删除或改 SSH 密钥。发现机器不会自动切走用户正在使用的目标；刷新会恢复上次选择。
+
+列表读取的是入口 bridge 所在账号的 Herdr profiles，不会同步其他电脑的配置。空列表就地说明这一点；多个入口各自发现其所在环境的机器。草稿与上次 pane 按入口、SSH 目标指纹、session 分开，目标或 session 更换产生新身份，旧选择不可写入新目标。连接尚未准备好时暂停选择 pane，元信息自动重试后恢复指定 session，不先给用户一个可写的本地 pane。
+
+沿用现有按钮、面板和动效，无新增视觉方向。主 Agent 检查 `artifacts/ssh-ui/phone-machines.png`、`phone-remote-chat.png` 和 `phone-remote-keyboard.png`，未见文字重叠或主动作遮挡；没有为本次局部面板改动追加独立视觉评分。浏览器另验 320px、390px、横屏和 450px visualViewport，仍不称为实机测试。
