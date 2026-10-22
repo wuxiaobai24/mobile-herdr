@@ -68,7 +68,11 @@ test('gateway scopes equal pane IDs, request receipts and credentials to the sel
 });
 
 // Opt-in only: creates its own sshd, host/client keys and fixture sockets; never uses user hosts or keys.
-test.skipIf(process.env.MOBILE_HERDR_SSH_LIVE !== '1')('real OpenSSH: temporary worker routes native chat and terminal, then detaches without stopping the original agent', async () => {
+for (const policy of [
+  { name: 'TCP works with StreamLocal disabled', tcp: 'yes', unix: 'no', rejectControl: false, expected: 'ssh-tcp' },
+  { name: 'Unix socket fallback works when TCP setup fails', tcp: 'yes', unix: 'yes', rejectControl: true, expected: 'ssh-unix' },
+  { name: 'both forwarding types disabled returns an accurate error', tcp: 'no', unix: 'no', rejectControl: false, expected: undefined },
+] as const) test.skipIf(process.env.MOBILE_HERDR_SSH_LIVE !== '1')(`real OpenSSH: ${policy.name}`, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mhssh-'));
   const remote = await createNativeFixture();
   let daemon: Bun.Subprocess | undefined; let endpoint: RemoteEndpoint | undefined; let bridge: ReturnType<typeof createBridge> | undefined;
@@ -92,17 +96,27 @@ test.skipIf(process.env.MOBILE_HERDR_SSH_LIVE !== '1')('real OpenSSH: temporary 
     const publicKey = (await readFile(join(directory, 'client.pub'), 'utf8')).trim();
     await writeFile(join(directory, 'authorized'), `command="${forced}",no-agent-forwarding,no-X11-forwarding ${publicKey}\n`, { mode: 0o600 });
     await writeFile(join(directory, 'known'), `owned-host ${await readFile(join(directory, 'host.pub'), 'utf8')}`);
-    await writeFile(join(directory, 'sshd_config'), `Port ${port}\nListenAddress 127.0.0.1\nHostKey ${directory}/host\nPidFile ${directory}/pid\nAuthorizedKeysFile ${directory}/authorized\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nPermitRootLogin no\nStrictModes no\nAllowUsers ${userInfo().username}\nAllowStreamLocalForwarding yes\nLogLevel ERROR\n`);
+    await writeFile(join(directory, 'sshd_config'), `Port ${port}\nListenAddress 127.0.0.1\nHostKey ${directory}/host\nPidFile ${directory}/pid\nAuthorizedKeysFile ${directory}/authorized\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nPermitRootLogin no\nStrictModes no\nAllowUsers ${userInfo().username}\nAllowTcpForwarding ${policy.tcp}\nAllowStreamLocalForwarding ${policy.unix}\nLogLevel ERROR\n`);
     await writeFile(join(directory, 'ssh_config'), `Host owned-test\n HostName 127.0.0.1\n Port ${port}\n User ${userInfo().username}\n IdentityFile ${directory}/client\n IdentitiesOnly yes\n UserKnownHostsFile ${directory}/known\n HostKeyAlias owned-host\n ControlMaster no\n`);
     const ssh = Bun.which('ssh')!;
     const wrapper = join(directory, 'ssh-wrapper');
-    await writeFile(wrapper, `#!/bin/sh\nexec ${quote(ssh)} -F ${quote(join(directory, 'ssh_config'))} "$@"\n`, { mode: 0o700 });
+    // Simulate a client that cannot add a multiplexed TCP forward; the fallback is real SSH.
+    const rejectControl = policy.rejectControl ? 'for arg in "$@"; do if [ "$arg" = "-O" ]; then exit 1; fi; done\n' : '';
+    await writeFile(wrapper, `#!/bin/sh\n${rejectControl}exec ${quote(ssh)} -F ${quote(join(directory, 'ssh_config'))} "$@"\n`, { mode: 0o700 });
     process.env.MOBILE_HERDR_SSH_BINARY = wrapper;
     daemon = Bun.spawn([Bun.which('sshd')!, '-D', '-e', '-f', join(directory, 'sshd_config')], { stdout: 'ignore', stderr: 'pipe' });
     await Bun.sleep(100);
     if (daemon.exitCode !== null) throw Error(await new Response(daemon.stderr as ReadableStream<Uint8Array>).text());
+    if (!policy.expected) {
+      await expect(openSsh(profile)).rejects.toMatchObject({ code: 'ssh_forwarding', message: expect.stringContaining('TCP 与 Unix socket') });
+      expect(remote.control.state.owner).toBe('desktop'); expect(remote.control.state.connected).toBe(true);
+      expect(remote.control.state.messages.filter(row => row.role === 'user')).toHaveLength(0);
+      return;
+    }
     try { endpoint = await openSsh(profile); }
     catch (error) { daemon.kill(); await daemon.exited; throw new Error(String(error) + '\n' + await new Response(daemon.stderr as ReadableStream<Uint8Array>).text()); }
+    expect(endpoint.transport).toBe(policy.expected);
+    expect(remote.control.state.messages.filter(row => row.role === 'user')).toHaveLength(0);
     const gateway = { async list() { return { machines: [{ id: profileRoute(profile), name: profile.label, session: profile.session, status: 'online' as const }] }; }, destination(id: string) { if (id !== profileRoute(profile)) throw Error('Wrong machine.'); return endpoint!; } };
     bridge = createBridge({ ...remote.config, port: 0 }, { remotes: gateway });
     const machine: Machine = { id: 'ssh-live', name: 'owned', url: `http://127.0.0.1:${bridge.port}`, token: remote.config.token, remote: profileRoute(profile) };

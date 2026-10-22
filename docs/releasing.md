@@ -1,6 +1,6 @@
 # Beta 发布流程
 
-当前版本：**0.2.2-beta.5**。源码公开，运行包以 GitHub prerelease 分发；每人自行部署自己的开发机。仍先以少量朋友验收真实设备行为，不需要公共 bridge、账号系统或手机应用商店。
+当前版本：**0.2.2-beta.6**。源码公开，运行包以 GitHub prerelease 分发；每人自行部署自己的开发机。仍先以少量朋友验收真实设备行为，不需要公共 bridge、账号系统或手机应用商店。
 
 ## 交付物
 
@@ -20,15 +20,17 @@ beta.4 增加终端 / 对话阅读工具、文件 Diff、连接心跳恢复、�
 
 beta.5 增加根目录 `install.sh` 和 `token set [--stdin] | status`。打包检查通过本地下载替身执行真实安装脚本，覆盖带空格 / 单引号路径、首次与重复安装、SHA-256 错误、已有同名命令、下载失败、缺少 Bun 时独立安装；并检查保存的自定义 token 实际用于 HTTP 鉴权与配对。测试不会往真实 HOME 安装软件，也不会修改本机已有命令。
 
+beta.6 将 token 最低长度降至8，CLI、服务端、手动表单与配对共用校验；打包的真实鉴权 / pair 和浏览器连接均使用8字符测试凭证。SSH 自动连接改为临时 loopback TCP bridge 与就绪探测，TCP建立失败再尝试 Unix socket；不需要远端预先安装 bridge 或开放固定端口。SSH 实测分别覆盖关闭 StreamLocal 时 TCP成功、客户端 TCP setup 失败时真实 Unix 回退、两种通道均被禁用时准确报错。
+
 产物位于 `artifacts/releases/`：
 
-- `mobile-herdr-0.2.2-beta.5.tar.gz`：预构建 Web、bundled bridge / 启动器 / Codex host / Pi 扩展、命令入口、内测指南、第三方许可文件。
+- `mobile-herdr-0.2.2-beta.6.tar.gz`：预构建 Web、bundled bridge / 启动器 / Codex host / Pi 扩展、命令入口、内测指南、第三方许可文件。
 - 同名 `.tar.gz.sha256`：压缩包 SHA-256。
 - 同名 `.tar.gz.verification.json`：本机验证的平台、版本、包摘要和实际通过项目。它是**打包冒烟测试**，不等同于真实 Herdr、真实 provider、真机或跨平台认证。
 
 `release.json` 记录版本、构建 Bun、构建时间、源码 HEAD 和 dirty 标识。打包使用显式入口清单，静态资源来自重新构建的 `dist/`，不复制 `.env`、本机 token、聊天记录、测试 fixture 或用户 state；第三方依赖只附带许可文件，运行包无需安装 node_modules。
 
-构建使用 [Bun bundler](https://bun.sh/docs/bundler)；保持现有相对入口路径，将运行依赖打进 JS 包。Pi 扩展以 Node 目标构建。选择此方式是为了保留 Bun PTY、独立 Codex host 和 Pi 进程内加载的现有语义；当前不做单个本地可执行文件或 Docker 镜像。朋友仍须自己安装 Bun 与 Herdr。0.2.2-beta.5 另附 `server/ssh-worker.bundle.js`，供 SSH stdin 临时执行；远端无需安装本项目，但需 Bun。打包冒烟测试显式关闭真实机器发现，避免读取或连接测试者的 SSH hosts。
+构建使用 [Bun bundler](https://bun.sh/docs/bundler)；保持现有相对入口路径，将运行依赖打进 JS 包。Pi 扩展以 Node 目标构建。选择此方式是为了保留 Bun PTY、独立 Codex host 和 Pi 进程内加载的现有语义；当前不做单个本地可执行文件或 Docker 镜像。朋友仍须自己安装 Bun 与 Herdr。0.2.2-beta.6 另附 `server/ssh-worker.bundle.js`，供 SSH stdin 临时执行；远端无需安装本项目，但需 Bun。打包冒烟测试显式关闭真实机器发现，避免读取或连接测试者的 SSH hosts。
 
 ## 发出前
 

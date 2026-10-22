@@ -5,6 +5,7 @@ import { connect, normalizeUrl, requestId } from '../../shared/client';
 import type { BridgeInfo, Machine } from '../../shared/protocol';
 import { useTheme, mono } from '../theme';
 import type { Pairing } from '../pairing';
+import { isValidToken } from '../../shared/auth';
 
 interface Props { visible: boolean; canClose: boolean; onClose: () => void; onConnect: (machine: Machine, info: BridgeInfo) => Promise<void>; pairing?: Pairing }
 export function ConnectDialog({ visible, canClose, onClose, onConnect, pairing }: Props): React.JSX.Element {
@@ -20,7 +21,7 @@ export function ConnectDialog({ visible, canClose, onClose, onConnect, pairing }
     setError(''); setBusy(true);
     try {
       const machine = { id: requestId(), url: normalizeUrl(url), name: name.trim(), token: token.trim() };
-      if (machine.token.length < 24) throw new Error('请粘贴开发机上的完整连接密钥。');
+      if (!isValidToken(machine.token)) throw new Error('请粘贴开发机上的完整连接密钥（至少 8 字符）。');
       const info = await connect(machine);
       machine.name ||= info.name;
       await onConnect(machine, info);

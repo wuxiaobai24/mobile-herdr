@@ -5,7 +5,7 @@ import { loadConfig } from './config';
 import { createBridge } from './server';
 import { rpc } from './rpc';
 
-export async function startSshWorker(input: { socket: string; token: string; session: string }): Promise<void> {
+export async function startSshWorker(input: { socket?: string; token: string; session: string }): Promise<void> {
   try {
     const [major, minor] = Bun.version.split('.').map(Number);
     if (major < 1 || major === 1 && minor < 4) { console.error('MOBILE_HERDR_BUN_MISSING'); process.exitCode = 1; return; }
@@ -22,14 +22,14 @@ export async function startSshWorker(input: { socket: string; token: string; ses
     const config = { ...await loadConfig({ token: input.token }), socket: status.socket, host: '127.0.0.1', port: 0, origins: [] };
     let lastActivity = Date.now();
     const bridge = createBridge(config, { unix: input.socket, onActivity: () => { lastActivity = Date.now(); } });
-    await chmod(input.socket, 0o600);
+    if (input.socket) await chmod(input.socket, 0o600);
     let stopping = false;
     async function stop(): Promise<void> {
       if (stopping) return; stopping = true;
-      clearInterval(idle); bridge.stop(true); await unlink(input.socket).catch(() => {}); process.exit(0);
+      clearInterval(idle); bridge.stop(true); if (input.socket) await unlink(input.socket).catch(() => {}); process.exit(0);
     }
     const idle = setInterval(() => { if (Date.now() - lastActivity > 35000) void stop(); }, 5000);
     for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.on(signal, () => void stop());
-    console.log(JSON.stringify({ type: 'mobile-herdr-ssh-ready' }));
+    console.log(JSON.stringify({ type: 'mobile-herdr-ssh-ready', ...(input.socket ? {} : { port: bridge.port }) }));
   } catch { console.error('MOBILE_HERDR_REMOTE_UNAVAILABLE'); process.exitCode = 1; }
 }

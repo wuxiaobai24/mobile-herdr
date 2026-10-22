@@ -7,7 +7,7 @@ import type { HerdrMachine } from '../shared/protocol';
 import { BridgeError } from './rpc';
 
 export interface SshProfile { id: string; label: string; target: string; session: string; enabled: boolean }
-export interface RemoteEndpoint { url: string; token: string; closed: Promise<unknown>; close(): Promise<void> }
+export interface RemoteEndpoint { url: string; token: string; transport?: 'ssh-tcp' | 'ssh-unix'; closed: Promise<unknown>; close(): Promise<void> }
 export interface RemoteGateway {
   list(): Promise<{ machines: HerdrMachine[]; error?: string }>;
   destination(id: string): RemoteEndpoint;
@@ -58,22 +58,34 @@ function sshError(stderr: string, profile: SshProfile): BridgeError {
   }
   if (stderr.includes('MOBILE_HERDR_BUN_MISSING')) return new BridgeError('ssh_bun_missing', '远端需要 Bun 1.4+。请在远端安装后重试；不会自动安装或重启 Herdr。', 409);
   if (stderr.includes('MOBILE_HERDR_REMOTE_UNAVAILABLE')) return new BridgeError('ssh_remote_unavailable', '远端 Bun、Herdr CLI 或指定 session 尚未就绪。请在电脑检查；不会自动启动或升级 Herdr。', 409);
-  if (/administratively prohibited|forwarding failed|open failed/i.test(stderr)) return new BridgeError('ssh_forwarding', 'SSH 转发不可用。请检查远端是否允许 Unix socket 转发（AllowStreamLocalForwarding）。', 409);
+  if (/administratively prohibited|forwarding failed|open failed/i.test(stderr)) return new BridgeError('ssh_forwarding', 'SSH 通道未能建立，可能是转发限制或远端监听不可用。', 409);
   return new BridgeError('ssh_offline', 'SSH 连接失败。请检查 Herdr machine 的地址、网络与认证；会自动重试。', 502);
 }
 
 export async function openSsh(profile: SshProfile): Promise<RemoteEndpoint> {
+  try { return await openSshTransport(profile, 'tcp'); }
+  catch (error) { if (!(error instanceof BridgeError) || error.code !== 'ssh_forwarding') throw error; }
+  try { return await openSshTransport(profile, 'unix'); }
+  catch (error) {
+    if (!(error instanceof BridgeError) || error.code !== 'ssh_forwarding') throw error;
+    throw new BridgeError('ssh_forwarding', 'SSH 的 TCP 与 Unix socket 通道均未建立。请检查 SSH 转发策略（AllowTcpForwarding / PermitOpen、AllowStreamLocalForwarding）及远端监听状态；也可手动添加已有 Web bridge 地址。', 409);
+  }
+}
+async function openSshTransport(profile: SshProfile, transport: 'tcp' | 'unix'): Promise<RemoteEndpoint> {
   const source = await workerSource();
   const directory = await mkdtemp(join(tmpdir(), 'mhs-'));
   await chmod(directory, 0o700);
   const localSocket = join(directory, 'bridge.sock');
+  const controlSocket = join(directory, 'control.sock');
   const remoteSocket = `/tmp/mobile-herdr-${randomUUID()}.sock`;
   const token = randomBytes(32).toString('base64url');
   const shell = 'if command -v bun >/dev/null 2>&1; then exec bun run -; elif [ -x "$HOME/.bun/bin/bun" ]; then exec "$HOME/.bun/bin/bun" run -; else echo MOBILE_HERDR_BUN_MISSING >&2; exit 127; fi';
-  const child = Bun.spawn([process.env.MOBILE_HERDR_SSH_BINARY ?? 'ssh', '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ExitOnForwardFailure=yes', '-o', 'ConnectTimeout=10',
-    '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=2', '-L', `${localSocket}:${remoteSocket}`, '--', profile.target, shell], { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
+  const binary = process.env.MOBILE_HERDR_SSH_BINARY ?? 'ssh';
+  const child = Bun.spawn([binary, '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ExitOnForwardFailure=yes', '-o', 'ConnectTimeout=10',
+    '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=2', ...(transport === 'tcp' ? ['-S', controlSocket, '-o', 'ControlMaster=yes', '-o', 'ControlPersist=no'] : ['-S', 'none', '-o', 'ControlMaster=no', '-L', `${localSocket}:${remoteSocket}`]), '--', profile.target, shell], { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
   let errorText = '';
   let ready = false;
+  let remotePort: number | undefined;
   const sockets = new Set<Socket>();
   const proxy = createServer(client => {
     const upstream = createConnection(localSocket);
@@ -96,20 +108,37 @@ export async function openSsh(profile: SshProfile): Promise<RemoteEndpoint> {
     })();
     return closing;
   }
-  void (async () => { for await (const chunk of child.stderr) errorText = (errorText + new TextDecoder().decode(chunk)).slice(-8192); })();
+  const stderrDone = (async () => { for await (const chunk of child.stderr) errorText = (errorText + new TextDecoder().decode(chunk)).slice(-8192); })();
   void (async () => {
-    let buffer = '';
+    let buffer = ''; const decoder = new TextDecoder();
     for await (const chunk of child.stdout) {
-      buffer = (buffer + new TextDecoder().decode(chunk)).slice(-8192);
-      if (buffer.includes('"type":"mobile-herdr-ssh-ready"')) ready = true;
+      buffer += decoder.decode(chunk, { stream: true });
+      let boundary: number;
+      while ((boundary = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, boundary); buffer = buffer.slice(boundary + 1);
+        try {
+          const event = JSON.parse(line);
+          if (event.type === 'mobile-herdr-ssh-ready' && (transport === 'unix' || (Number.isInteger(event.port) && event.port > 0 && event.port < 65536))) { ready = true; remotePort = event.port; }
+        } catch { /* Ignore login banners, never surface raw remote output. */ }
+      }
+      buffer = buffer.slice(-8192);
     }
   })();
   try {
     // Code and the temporary credential travel only inside SSH stdin, never argv or logs.
-    child.stdin.write(source + `\nawait startSshWorker(${JSON.stringify({ socket: remoteSocket, token, session: profile.session })});\n`);
+    child.stdin.write(source + `\nawait startSshWorker(${JSON.stringify({ ...(transport === 'unix' ? { socket: remoteSocket } : {}), token, session: profile.session })});\n`);
     child.stdin.end();
     for (let attempt = 0; attempt < 300 && !ready && child.exitCode === null; attempt++) await Bun.sleep(50);
-    if (!ready || child.exitCode !== null) throw sshError(errorText, profile);
+    if (!ready || child.exitCode !== null) { if (child.exitCode !== null) await stderrDone; throw sshError(errorText, profile); }
+    if (transport === 'tcp') {
+      const forward = Bun.spawn([binary, '-S', controlSocket, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=10', '-O', 'forward', '-L', `${localSocket}:127.0.0.1:${remotePort}`, '--', profile.target], { stdin: 'ignore', stdout: 'ignore', stderr: 'pipe' });
+      const deadline = setTimeout(() => forward.kill(), 10000);
+      try {
+        const output = await new Response(forward.stderr).text();
+        if (await forward.exited !== 0) throw new BridgeError('ssh_forwarding', 'SSH TCP 通道未能建立。', 409);
+        errorText = (errorText + output).slice(-8192);
+      } finally { clearTimeout(deadline); }
+    }
     await new Promise<void>((resolve, reject) => { proxy.once('error', reject); proxy.listen(0, '127.0.0.1', () => { proxy.off('error', reject); resolve(); }); });
     const address = proxy.address();
     if (!address || typeof address === 'string') throw new Error('SSH proxy unavailable.');
@@ -119,7 +148,12 @@ export async function openSsh(profile: SshProfile): Promise<RemoteEndpoint> {
       await response.arrayBuffer();
       if (!response.ok) throw new Error('SSH heartbeat failed.');
     }
-    try { await probe(); } catch { throw sshError(errorText, profile); }
+    try { await probe(); }
+    catch {
+      const error = sshError(errorText, profile);
+      if (['ssh_auth', 'ssh_bun_missing', 'ssh_remote_unavailable'].includes(error.code)) throw error;
+      throw new BridgeError('ssh_forwarding', 'SSH 通道探测失败。', 409);
+    }
     let probing = false;
     heartbeat = setInterval(() => {
       if (probing) return;
@@ -128,7 +162,7 @@ export async function openSsh(profile: SshProfile): Promise<RemoteEndpoint> {
     }, 10000);
     heartbeat.unref();
     void child.exited.then(() => close());
-    return { url, token, closed: child.exited, close };
+    return { url, token, transport: transport === 'tcp' ? 'ssh-tcp' : 'ssh-unix', closed: child.exited, close };
   } catch (error) { await close(); throw error; }
 }
 

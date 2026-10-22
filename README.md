@@ -8,7 +8,7 @@
 
 ## 一键安装
 
-当前版本 **0.2.2-beta.5**，源码公开，运行包见 [GitHub Releases](https://github.com/wuxiaobai24/mobile-herdr/releases)。在已有 Herdr 的开发机执行：
+当前版本 **0.2.2-beta.6**，源码公开，运行包见 [GitHub Releases](https://github.com/wuxiaobai24/mobile-herdr/releases)。在已有 Herdr 的开发机执行：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wuxiaobai24/mobile-herdr/master/install.sh | bash
@@ -22,7 +22,7 @@ mobile-herdr pair --url http://你的开发机局域网IP:7331
 
 可先下载并阅读脚本，或用 `bash install.sh --help` 查看版本和路径选项。默认包目录 `~/.local/share/mobile-herdr`，命令目录 `~/.local/bin`；旧版本与 token 均保留。升级后需自行停止旧 bridge、再启动新版，原生 agent 能力升级见指南。
 
-Token 不设置时自动生成；`mobile-herdr token set` 将自定义值持久保存在当前 state 的 `token` 文件（0600），启动和配对共用。支持 24–4096 个非空白 ASCII 字符，请使用随机长串。设置后重启 **Mobile Herdr bridge** 并重新配对即可，Herdr / agent 无需重启。`MOBILE_HERDR_TOKEN` 环境变量仍支持，且优先于文件；`mobile-herdr token status` 仅显示配置来源，不打印密钥。自动化可用 `token set --stdin`，不要把密钥写入命令参数或仓库。
+Token 不设置时自动生成；`mobile-herdr token set` 将自定义值持久保存在当前 state 的 `token` 文件（0600），启动和配对共用。支持 8–4096 个非空白 ASCII 字符，请使用随机长串。设置后重启 **Mobile Herdr bridge** 并重新配对即可，Herdr / agent 无需重启。`MOBILE_HERDR_TOKEN` 环境变量仍支持，且优先于文件；`mobile-herdr token status` 仅显示配置来源，不打印密钥。自动化可用 `token set --stdin`，不要把密钥写入命令参数或仓库。
 
 - 使用者：[安装、配对、升级与回退](docs/beta-guide.md)
 - 维护者：[打包验证与发布步骤](docs/releasing.md)
@@ -117,9 +117,11 @@ Codex 普通命令 / 文件审批和结构化问题可以在 Chat 中处理；�
 
 从 0.2.2-beta.2 起，bridge 会读取同一账号的 `herdr machine list --json`，自动发现并连接启用的 SSH machines，在“开发机”中显示连接、离线、认证和禁用状态。手机只需配对入口 bridge，不必逐台填写远端地址和密钥。新增连接不会切走当前机器，刷新后恢复上次选择。
 
-SSH 使用入口开发机上的 OpenSSH 配置、密钥和 agent；不会把 SSH 凭证发到浏览器。远端需要 **Bun 1.4+**、正在运行且支持 protocol 22 的 Herdr，以及可从 SSH 命令找到的 Herdr CLI。连接会通过 SSH stdin 传入临时 bridge 程序，用私有 Unix socket 转发；不安装远端包、不启动或替换 Herdr、不恢复第二份 agent。SSH 断开后临时 bridge 最迟约 40 秒清理，原生 agent 和 Herdr session 继续运行。
+SSH 使用入口开发机上的 OpenSSH 配置、密钥和 agent；不会把 SSH 凭证发到浏览器。远端需要 **Bun 1.4+**、正在运行且支持 protocol 22 的 Herdr，以及可从 SSH 命令找到的 Herdr CLI。通过 SSH stdin 传入临时 bridge 程序，优先监听远端 `127.0.0.1` 的系统分配端口、建立 SSH TCP 通道并探测就绪；通道失败再尝试 Unix socket 转发。不依赖远端固定的7331端口，不需要提前部署 bridge 或开放公网 Web 端口。不安装远端包、不启动或替换 Herdr、不恢复第二份 agent。SSH 断开后临时 bridge 最迟约 40 秒清理，原生 agent 和 Herdr session 继续运行。
 
-需要认证时，在入口开发机运行页面提示的 `herdr machine reconnect <ID>`。远端 Bun 缺失、session 离线或 SSH 不允许 Unix socket 转发时会明确报错，不自动安装、接受新 host key 或重启服务。bridge 所在开发机的目录为空时不会跨电脑猜测 profiles；先以启动 bridge 的同一账号检查 `herdr machine list --json`。
+需要认证时，在入口开发机运行页面提示的 `herdr machine reconnect <ID>`。远端 Bun 缺失、session 离线或两种 SSH 通道均不可用时会明确报错，不自动安装、接受新 host key 或修改 sshd 策略。TCP 通道受 `AllowTcpForwarding` / `PermitOpen` 等控制；Unix 回退也受服务端整体转发策略约束，不能保证绕过所有限制。bridge 所在开发机的目录为空时不会跨电脑猜测 profiles；先以启动 bridge 的同一账号检查 `herdr machine list --json`。
+
+Herdr 的 SSH 地址不等于 Web bridge 地址。若远端没有运行 Web bridge，探测 IP 端口也没有可连接的服务，因此自动模式使用上述临时 bridge。已有可直连 bridge 的机器可通过“添加开发机”填写其 URL 和 token；不会猜测端口或将入口 token 发给未知服务。
 
 也可继续在每台开发机独立运行 bridge，并在“添加开发机”手动保存地址和密钥。所有终端、transcript、agent 凭证仍在对应的开发机；当前没有 relay 或 SSH 密钥管理。
 
@@ -138,7 +140,7 @@ HTTPS 页面应连接 HTTPS / WSS bridge，避免浏览器拦截 mixed content�
 | `MOBILE_HERDR_HOST` | `127.0.0.1` |
 | `MOBILE_HERDR_PORT` | `7331` |
 | `MOBILE_HERDR_NAME` | 开发机 hostname |
-| `MOBILE_HERDR_TOKEN` | 优先于 token 文件；支持 24–4096 个非空白 ASCII 字符。不设置时读取文件或自动生成 32 字节随机密钥 |
+| `MOBILE_HERDR_TOKEN` | 优先于 token 文件；支持 8–4096 个非空白 ASCII 字符。不设置时读取文件或自动生成 32 字节随机密钥 |
 | `MOBILE_HERDR_STATE` | `~/.local/state/mobile-herdr` |
 | `MOBILE_HERDR_HERDR_HOME` | `~/.config/herdr`，用于发现 default / named sessions |
 | `MOBILE_HERDR_SOCKET` / `HERDR_SOCKET` | 固定使用一个 API socket，覆盖自动发现 |

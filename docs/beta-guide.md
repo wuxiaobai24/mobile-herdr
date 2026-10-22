@@ -8,11 +8,11 @@
 curl -fsSL https://raw.githubusercontent.com/wuxiaobai24/mobile-herdr/master/install.sh | bash
 ```
 
-脚本从 GitHub 下载固定测试版本 beta.5 并校验 SHA-256，默认把版本放在 `~/.local/share/mobile-herdr/versions`，命令放在 `~/.local/bin`。安装不需要 sudo；缺少 Bun 时从 bun.sh 官方入口安装 Bun 1.4.0 到 `~/.local/share/mobile-herdr/bun`，不升级系统已有 Bun、不修改 shell 配置。已有 Bun 过旧会提示使用者自行处理。自动安装 Bun 需要 unzip，下载与解压还需要 curl、tar、sha256sum 或 shasum。
+脚本从 GitHub 下载固定测试版本 beta.6 并校验 SHA-256，默认把版本放在 `~/.local/share/mobile-herdr/versions`，命令放在 `~/.local/bin`。安装不需要 sudo；缺少 Bun 时从 bun.sh 官方入口安装 Bun 1.4.0 到 `~/.local/share/mobile-herdr/bun`，不升级系统已有 Bun、不修改 shell 配置。已有 Bun 过旧会提示使用者自行处理。自动安装 Bun 需要 unzip，下载与解压还需要 curl、tar、sha256sum 或 shasum。
 
 安装后可直接运行 `mobile-herdr` 和 `mherdr`；若 PATH 未包含 `~/.local/bin`，先 `export PATH="$HOME/.local/bin:$PATH"`，或使用完整路径。下文的 `./bin/mobile-herdr` 均可替换为 `mobile-herdr`，无需进入安装目录。一键安装已装好 `mherdr`，无需再执行 install-agent；手动解压仍按下文安装。
 
-可先下载阅读脚本，再执行 `bash install.sh --help`。支持 `--version 0.2.2-beta.5`、`--prefix <目录>`、`--bin-dir <目录>` 和 `--no-install-bun`。默认版本随经过验证的发布更新，具体旧版必须已有对应 GitHub Release。脚本保留旧版本、不更改 token、不结束已有进程；重复安装同一个包可安全再次执行。已有同名非本工具命令时拒绝覆盖。
+可先下载阅读脚本，再执行 `bash install.sh --help`。支持 `--version 0.2.2-beta.6`、`--prefix <目录>`、`--bin-dir <目录>` 和 `--no-install-bun`。默认版本随经过验证的发布更新，具体旧版必须已有对应 GitHub Release。脚本保留旧版本、不更改 token、不结束已有进程；重复安装同一个包可安全再次执行。已有同名非本工具命令时拒绝覆盖。
 
 安装只准备文件。确认 Herdr 已运行后，执行 `MOBILE_HERDR_HOST=0.0.0.0 mobile-herdr background`，再用手机可达地址运行 `mobile-herdr pair --url ...`；默认未设置 HOST 时只允许本机访问。首次环境要求、HTTPS 与安全配对说明仍见下文。
 
@@ -29,11 +29,11 @@ curl -fsSL https://raw.githubusercontent.com/wuxiaobai24/mobile-herdr/master/ins
 从邀请人获取同一版本的 `.tar.gz` 与 `.tar.gz.sha256`，放在同一目录：
 
 ```bash
-sha256sum -c mobile-herdr-0.2.2-beta.5.tar.gz.sha256
-# macOS 上校验可用：shasum -a 256 -c mobile-herdr-0.2.2-beta.5.tar.gz.sha256
+sha256sum -c mobile-herdr-0.2.2-beta.6.tar.gz.sha256
+# macOS 上校验可用：shasum -a 256 -c mobile-herdr-0.2.2-beta.6.tar.gz.sha256
 
-tar -xzf mobile-herdr-0.2.2-beta.5.tar.gz
-cd mobile-herdr-0.2.2-beta.5
+tar -xzf mobile-herdr-0.2.2-beta.6.tar.gz
+cd mobile-herdr-0.2.2-beta.6
 ./bin/mobile-herdr --version
 ```
 
@@ -88,7 +88,7 @@ HTTPS 下可通过浏览器菜单添加到主屏幕。普通局域网 HTTP 可�
 # 源码目录对应：bun run token set
 ```
 
-支持 24–4096 个非空白 ASCII 字符，推荐使用密码管理器生成的随机长串。命令原子保存到当前 state 的 token 文件，权限 0600；输入无效时保留原值。安装脚本和升级不覆盖该文件。自动化可将秘密管理器输出管道接到 `mobile-herdr token set --stdin`；不接受把密钥放在命令参数中。
+支持 8–4096 个非空白 ASCII 字符，推荐使用密码管理器生成的随机长串。命令原子保存到当前 state 的 token 文件，权限 0600；输入无效时保留原值。安装脚本和升级不覆盖该文件。自动化可将秘密管理器输出管道接到 `mobile-herdr token set --stdin`；不接受把密钥放在命令参数中。
 
 修改后需停止并重新启动 **Mobile Herdr bridge**，运行 pair 生成新二维码，再更新手机连接；旧 token 随旧 bridge 停止而失效，Herdr 和 agent 无需重启。环境变量 `MOBILE_HERDR_TOKEN` 优先于文件；若要使用保存值，须在启动 bridge 和 pair 前取消原环境变量。手动通过环境变量设置时，两个命令须使用同一值。token 不会热更新，也不会自动同步到其他 bridge。
 
@@ -97,12 +97,14 @@ HTTPS 下可通过浏览器菜单添加到主屏幕。普通局域网 HTTP 可�
 入口 bridge 现在会自动发现同一账号下 Herdr 已保存并启用的 SSH machines。配对入口后，打开“开发机”即可看到远端机器与连接状态；不需要再逐台扫码或手动输入远端 token。
 
 1. 在**运行入口 bridge 的开发机、同一账号**执行 `herdr machine list --json`，确认能看到目标机器。保存在另一台电脑上的 profiles 不会自动同步。
-2. 本地需要 OpenSSH；远端需要 Bun 1.4+、已运行的 Herdr protocol 22 session，以及 SSH 能找到的 Herdr CLI。无需在远端安装本项目或开放 Web 端口，但 SSH 服务须允许 Unix socket 转发。
+2. 本地需要 OpenSSH；远端需要 Bun 1.4+、已运行的 Herdr protocol 22 session，以及 SSH 能找到的 Herdr CLI。无需在远端安装本项目或开放公网 Web 端口。自动模式优先使用 SSH TCP 转发（远端仅监听127.0.0.1），失败再尝试 Unix socket 转发，至少一种通道须能建立。
 3. 机器会自动连接；点击对应行进入，或保持当前机器继续工作。禁用的 profile 不会连接。认证失败时按页面提示在入口开发机运行 `herdr machine reconnect <ID>`，完成后自动重试；不要在手机输入 SSH 密码或私钥。
 
-此路径只在 SSH 内临时执行 bridge，读取远端 transcript 与已有原生注册实例，不启动第二份 agent，不启动或重启 Herdr，也不安装远端包。关闭入口或失去 SSH 后临时 bridge 自动清理，Herdr session 与原生 agent 保持运行。草稿按机器、session 和 pane 分开，重连不会自动重发。
+此路径只在 SSH 内临时执行 bridge，远端操作系统自动分配空闲 loopback 端口，入口经隧道探测服务就绪。无需猜测固定端口，也不要求远端已安装 bridge。读取远端 transcript 与已有原生注册实例，不启动第二份 agent，不启动或重启 Herdr，也不安装远端包。关闭入口或失去 SSH 后临时 bridge 自动清理，Herdr session 与原生 agent 保持运行。草稿按机器、session 和 pane 分开，重连不会自动重发。
 
-远端 Bun 缺失、指定 session 离线或 SSH 转发受限时显示错误；可以在电脑补齐环境后重试，或继续使用独立 bridge 的手动连接方式。远端若使用自定义 `MOBILE_HERDR_STATE`，须让 SSH 环境提供相同值，才能读取该目录中的原生实例。
+远端 Bun 缺失、指定 session 离线或 SSH 转发受限时显示错误。TCP 相关策略包括 `AllowTcpForwarding` / `PermitOpen`，Unix socket 对应 `AllowStreamLocalForwarding`；服务端全局或 key 限制可能同时影响两者，回退不保证绕过限制。程序不修改 sshd 配置；可以在电脑补齐环境后重试，或使用独立 bridge 的手动连接方式。远端若使用自定义 `MOBILE_HERDR_STATE`，须让 SSH 环境提供相同值，才能读取该目录中的原生实例。
+
+远端没有 Web bridge 时，直接扫描 IP 端口不能提供 Web 服务；自动模式已代为临时运行所需 bridge。若用户自行部署了可达 bridge，可用“添加开发机”填写其 HTTP(S) URL 和 token 直连；入口不会向猜测的 IP / 端口发送自己的 token。
 
 ## 4. 继续现有会话
 

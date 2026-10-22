@@ -67,7 +67,7 @@ try {
   await writeFile(join(protectedDirectory, 'mherdr'), 'unrelated user command\n');
   const refused = await run([wrapper, 'install-agent', '--bin-dir', protectedDirectory], env, directory);
   check('installation preserves an unrelated existing command', refused.code !== 0 && await readFile(join(protectedDirectory, 'mherdr'), 'utf8') === 'unrelated user command\n');
-  const customToken = createHash('sha256').update(directory).digest('hex');
+  const customToken = createHash('sha256').update(directory).digest('hex').slice(0, 8);
   const configured = await run([wrapper, 'token', 'set', '--stdin'], env, directory, customToken + '\n');
   check('packaged token command saves a custom credential without printing it', configured.code === 0 && !configured.stdout.includes(customToken) && (await readFile(join(env.MOBILE_HERDR_STATE!, 'token'), 'utf8')).trim() === customToken);
   await verifyInstall(archive, directory, check);

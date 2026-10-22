@@ -135,3 +135,12 @@ Oil UI 版本检查记录：使用 0.18.1，提示可更新至 0.23.9，本任�
 - 重建静态资源后 `bun run test:ui`：**110 checks 通过、0 uncaught errors**；原手机宽度、450px 可视高度、主题、终端、审批、搜索、SSH 与页面恢复回归均通过。此次没有更改视觉布局，真实手机与跨平台验收边界不变。
 - 公开前检查全部 Git 提交差异：未发现常见 GitHub / API / AWS 凭证格式、私钥头、敏感文件名，亦未发现当前本机 token。该检查针对已列模式与本机已知值，不等同于完整安全审计。发布包仍使用显式文件清单，不携带 state、transcript 或本机配置。
 - 发布采用 clean HEAD 的源码标识与校验和，GitHub tag 为 `v0.2.2-beta.5`，默认安装版本固定为该已验收版本。安装不会自动停止 / 启动 bridge 或 Herdr；升级与 token 轮换需要使用者显式重启自己的 bridge。源码公开与 beta 分发不改变手机 / macOS / ARM64 尚待验收的状态。
+
+## 8 字符 token 与 SSH 通道兼容（0.2.2-beta.6）
+
+- token 校验移到 `shared/auth.ts`，CLI、服务端、手动连接和 pairing 均接受8–4096个非空白 ASCII 字符。默认随机生成长度不变。包内真实 HTTP 鉴权与 pair 使用8字符凭证验证；浏览器 fixture 同样使用随机8字符 token，新增无存储上下文扫码配对、清除 fragment 后连接成功的检查，未截取带凭证的页面。
+- SSH worker 默认由远端 OS 分配 `127.0.0.1` 空闲端口，通过专用、私有 ControlMaster 添加 TCP 转发并做只读 `/api/info` 探测；只在通道失败时回退原 Unix socket 路径。网络 / 认证 / provider 环境错误不靠重放写入处理。Unix 回退明确禁用共享已有 SSH master，停止只清理本次创建的进程和本地 socket。
+- 完整 opt-in 测试：**36 pass、0 fail、278 assertions**，包括真实 Herdr / Codex / Pi 与隔离 sshd。SSH 三种新增场景：`AllowStreamLocalForwarding no` 时真实 TCP 路径完成 native 消息去重及终端收发；fixture 客户端拒绝 `-O forward` 时回退真实 Unix 路径并完成同样操作；TCP / StreamLocal 均禁用时准确报错，原运行实例、输入权和消息保持不变。所有服务、密钥、端口和写入均为测试自身创建，不触碰用户已有 sshd、SSH 配置或 Herdr session。
+- `bun run typecheck`、`git diff --check`、重建静态资源后的 `bun run test:ui`（**32 + 20 + 14 + 25 + 20 = 111 checks**，0 uncaught errors）通过。`bun run test:release` **31 checks** 通过（Linux x64），包括8字符 token 的打包鉴权和配对、安装器重复执行与失败保留。
+- 错误原因不再仅归于 `AllowStreamLocalForwarding`。[OpenSSH 的路径连接实现](https://github.com/openssh/openssh-portable/blob/V_10_5_P1/channels.c) 还检查整体转发权限；隔离测试发现仅开启 StreamLocal 并不能保证被全局策略限制时可用。因此 Unix 是兼容回退，不能承诺绕过服务端限制。
+- 远端没有常驻 Web bridge 时，扫描 IP 端口不能提供 Web 服务。自动模式只经 SSH 启动临时 bridge 并探测实际端口，不猜测固定7331，不向未知端口投递入口 token；现有独立 bridge 可由用户手动添加地址直连。用户另一台电脑的实际 profile 未在本机验证，需在保存 profiles 的入口电脑更新并重启 Mobile Herdr bridge。

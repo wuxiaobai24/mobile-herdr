@@ -1,6 +1,6 @@
 {
   "name": "mobile-herdr",
-  "version": "0.2.2-beta.5",
+  "version": "0.2.2-beta.6",
   "private": true,
   "type": "module",
   "main": "index.ts",

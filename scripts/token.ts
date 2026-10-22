@@ -9,7 +9,7 @@ async function readSecret(): Promise<string> {
   const hidden = new Writable({ write(_chunk, _encoding, done) { done(); } });
   const input = createInterface({ input: process.stdin, output: hidden, terminal: true });
   const cancel = new AbortController(); input.once('SIGINT', () => cancel.abort());
-  process.stderr.write('自定义连接密钥（至少 24 字符，输入不回显）：');
+  process.stderr.write('自定义连接密钥（至少 8 字符，输入不回显）：');
   try { return await input.question('', { signal: cancel.signal }); }
   catch { throw new Error('已取消，未修改连接密钥。'); }
   finally { input.close(); process.stderr.write('\n'); }

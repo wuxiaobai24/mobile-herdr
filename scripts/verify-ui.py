@@ -1,5 +1,6 @@
 """Exercise the phone UI against an isolated Unix-socket fixture, never the user's agents."""
 import json
+import base64
 import os
 import time
 from pathlib import Path
@@ -243,6 +244,16 @@ with sync_playwright() as p:
     expect(detail_page.get_by_label('发给原会话的消息', exact=True)).to_be_visible()
     snapshot(detail_page, 'phone-detail-2x.png')
     detail_context.close()
+    pairing_context = browser.new_context(viewport={'width': 390, 'height': 844}, is_mobile=True, has_touch=True)
+    pairing_page = pairing_context.new_page()
+    pairing = base64.urlsafe_b64encode(json.dumps({'version':1,'url':url,'name':'扫码开发机','token':token}).encode()).decode().rstrip('=')
+    pairing_page.goto(url + '/#connect=' + pairing)
+    expect(pairing_page.get_by_label('连接开发机',exact=True)).to_be_visible()
+    pairing_page.wait_for_function('location.hash === ""')
+    pairing_page.get_by_label('连接开发机',exact=True).click()
+    expect(pairing_page.get_by_label('发给原会话的消息',exact=True)).to_be_visible()
+    check('eight-character pairing token is accepted and its fragment cleared', len(token) == 8)
+    pairing_context.close()
     check('no uncaught browser errors', not errors)
     context.close()
     Path(page.video.path()).replace(artifacts / 'interaction.webm')

@@ -2,10 +2,11 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { isValidToken } from '../shared/auth';
 
 export function stateDirectory(): string { return process.env.MOBILE_HERDR_STATE ?? join(homedir(), '.local/state/mobile-herdr'); }
 export function validateToken(token: string): string {
-  if (!/^[\x21-\x7e]{24,4096}$/.test(token)) throw new Error('连接密钥需要 24–4096 个非空白 ASCII 字符。');
+  if (!isValidToken(token)) throw new Error('连接密钥需要 8–4096 个非空白 ASCII 字符。');
   return token;
 }
 export async function savedToken(directory: string): Promise<string> {

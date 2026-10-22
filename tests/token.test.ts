@@ -12,7 +12,10 @@ test('custom tokens are validated before atomic replacement and retain private p
     expect(await savedToken(directory)).toBe(generated);
     const custom = randomBytes(32).toString('base64url'); await saveToken(directory, custom);
     expect(await savedToken(directory)).toBe(custom); expect((await stat(join(directory, 'token'))).mode & 0o777).toBe(0o600);
-    for (const value of ['', 'short', 'x'.repeat(24) + '\nInjected', ' '.repeat(24), 'x'.repeat(4097)]) expect(() => validateToken(value)).toThrow();
+    expect(validateToken('eightkey')).toBe('eightkey');
+    await saveToken(directory, 'eightkey'); expect(await savedToken(directory)).toBe('eightkey');
+    await saveToken(directory, custom);
+    for (const value of ['', '1234567', 'x'.repeat(8) + '\nInjected', ' '.repeat(8), 'x'.repeat(4097)]) expect(() => validateToken(value)).toThrow();
     await expect(saveToken(directory, 'invalid')).rejects.toThrow(); expect(await savedToken(directory)).toBe(custom);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
