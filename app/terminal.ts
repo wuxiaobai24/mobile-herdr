@@ -1,4 +1,5 @@
 import { Terminal, type ITheme } from '@xterm/xterm';
+import { copyText } from './clipboard.web';
 import { FitAddon } from '@xterm/addon-fit';
 import { applyTheme, getTheme, parseAppearance, defaultAppearance, type ThemeColors } from '../shared/themes';
 
@@ -25,11 +26,57 @@ const keyboard = document.getElementById('keyboard') as HTMLButtonElement;
 terminal.loadAddon(fit); terminal.open(surface);
 let socket: WebSocket | undefined;
 let credentials: { token: string; session: string; pane: string; machine?: string } | undefined;
-let connected = false;
+let connected = false, disposing = false, retryCount = 0;
+let lastSeen = Date.now();
+let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+let heartbeat: ReturnType<typeof setInterval> | undefined;
 let historyRequest: AbortController | undefined;
+let historyText = '', selectedHistory = '', matchIndex = 0;
+function rememberSelection(): void {
+  const selection = window.getSelection();
+  if (selection?.anchorNode && historyContent.contains(selection.anchorNode)) selectedHistory = selection.toString();
+  document.getElementById('copy-history')!.textContent = selectedHistory ? '复制所选' : '复制';
+}
+document.addEventListener('selectionchange', rememberSelection);
+document.getElementById('copy-history')!.addEventListener('pointerdown', rememberSelection);
+const queryField = document.getElementById('history-query') as HTMLInputElement;
+function renderHistory(): void {
+  selectedHistory = '';
+  const query = queryField.value.toLocaleLowerCase();
+  historyContent.replaceChildren();
+  if (!query) historyContent.textContent = historyText;
+  else {
+    const source = historyText.toLocaleLowerCase(); let position = 0, found = 0;
+    while (position < historyText.length) {
+      const index = source.indexOf(query, position);
+      if (index < 0 || found >= 500) { historyContent.append(document.createTextNode(historyText.slice(position))); break; }
+      historyContent.append(document.createTextNode(historyText.slice(position, index)));
+      const mark = document.createElement('mark'); mark.textContent = historyText.slice(index, index + query.length); historyContent.append(mark);
+      position = index + query.length; found++;
+    }
+  }
+  updateMatches(false);
+}
+function updateMatches(scroll: boolean): void {
+  const matches = historyContent.querySelectorAll('mark');
+  matchIndex = matches.length ? (matchIndex + matches.length) % matches.length : 0;
+  matches.forEach((mark, i) => { mark.dataset.active = String(i === matchIndex); });
+  document.getElementById('match-count')!.textContent = matches.length ? `${matchIndex + 1}/${matches.length}${matches.length === 500 ? '+' : ''}` : '0';
+  if (scroll) matches[matchIndex]?.scrollIntoView({ block: 'center', inline: 'nearest' });
+}
+queryField.oninput = () => { matchIndex = 0; renderHistory(); updateMatches(true); };
+document.getElementById('previous-match')!.onclick = () => { matchIndex--; updateMatches(true); };
+document.getElementById('next-match')!.onclick = () => { matchIndex++; updateMatches(true); };
+document.getElementById('history-top')!.onclick = () => { historyContent.scrollTop = 0; };
+document.getElementById('history-bottom')!.onclick = () => { historyContent.scrollTop = historyContent.scrollHeight; };
+document.getElementById('copy-history')!.onclick = () => {
+  const selection = window.getSelection();
+  const selected = selection?.anchorNode && historyContent.contains(selection.anchorNode) ? selection.toString() || selectedHistory : selectedHistory;
+  void copyText(selected || historyText).then(() => { historyNote.textContent = selected ? '已复制选中内容' : '已复制历史'; }).catch(() => { historyNote.textContent = '复制不可用，请长按选择文字复制。'; });
+};
 
 function resize(): void {
-  if (!history.hidden) return;
+  if (!history.hidden || surface.clientWidth < 1 || surface.clientHeight < 1) return;
   fit.fit();
   if (connected) socket?.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
 }
@@ -66,37 +113,44 @@ async function showHistory(): Promise<void> {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error?.message ?? '读取失败，请重试。');
     if (request.signal.aborted || credentials !== target) return;
-    historyContent.textContent = result.read?.text || '暂无终端输出。';
-    historyNote.textContent = result.read?.truncated ? '最近 2000 行 · 向上滑动查看' : '终端历史 · 滑动查看、选择复制';
+    historyText = result.read?.text || '暂无终端输出。'; renderHistory();
+    historyNote.textContent = result.read?.truncated ? '最近 2000 行 · 可搜索与复制' : '终端历史 · 滑动查看、选择复制';
     historyContent.scrollTop = wasOpen ? oldTop : historyContent.scrollHeight;
   } catch (error) {
     if (request.signal.aborted) return;
     historyNote.textContent = error instanceof Error ? error.message : '历史读取失败，请重试。';
   }
 }
-function start(): void {
-  if (!credentials) return;
+function start(reset = true): void {
+  if (!credentials || disposing) return;
+  clearTimeout(reconnectTimer); clearInterval(heartbeat); lastSeen = Date.now();
   if (socket) { socket.onclose = null; socket.close(); }
-  connected = false; hideHistory(); terminal.reset(); scrollState(); state.textContent = '连接原始终端…';
+  connected = false; if (reset) { hideHistory(); terminal.reset(); } scrollState(); state.textContent = '连接原始终端…';
   socket = new WebSocket(location.origin.replace(/^http/, 'ws') + '/api/terminal');
   const active = socket;
   active.binaryType = 'arraybuffer';
   active.onopen = () => { fit.fit(); active.send(JSON.stringify({ type: 'auth', ...credentials, cols: terminal.cols, rows: terminal.rows })); };
+  heartbeat = setInterval(() => {
+    if (disposing || active !== socket) return;
+    if (Date.now() - lastSeen > 20000) { connected = false; active.close(); start(false); return; }
+    if (active.readyState === WebSocket.OPEN) active.send(JSON.stringify({ type: 'ping' }));
+  }, 5000);
   active.onmessage = event => {
-    if (active !== socket) return;
+    if (active !== socket) return; lastSeen = Date.now();
     if (typeof event.data === 'string') {
       try {
         const frame = JSON.parse(event.data);
-        if (frame.type === 'ready') { connected = true; state.textContent = '实时终端 · 滑动查看历史'; if (history.hidden) hideHistory(); resize(); }
+        if (frame.type === 'ready') { connected = true; retryCount = 0; state.textContent = '实时终端 · 滑动查看历史'; if (history.hidden) hideHistory(); resize(); }
         if (frame.type === 'error') state.textContent = frame.error.message;
       } catch { /* PTY frames are binary; reject unknown control frames. */ }
     } else terminal.write(new Uint8Array(event.data));
   };
   active.onclose = event => {
     if (active !== socket) return;
-    connected = false; keyboard.disabled = true;
+    connected = false; clearInterval(heartbeat); keyboard.disabled = true;
     document.querySelectorAll<HTMLButtonElement>('[data-key]').forEach(button => { button.disabled = true; });
-    state.textContent = event.code === 1008 ? '密钥无效，请重新配对' : '已断开 · 原会话继续运行';
+    state.textContent = event.code === 1008 ? '密钥无效，请重新配对' : '终端重连中 · 原会话继续运行';
+    if (event.code !== 1008 && !disposing && navigator.onLine) reconnectTimer = setTimeout(() => start(false), Math.min(15000, 750 * 2 ** Math.min(retryCount++, 5)));
   };
   active.onerror = () => { if (active === socket) state.textContent = '终端连接失败，请检查网络。'; };
 }
@@ -115,7 +169,7 @@ function receive(event: MessageEvent): void {
   resize();
   const next = { token: message.token, session: message.session, pane: message.pane, machine: typeof message.machine === 'string' ? message.machine : undefined };
   if (JSON.stringify(credentials) === JSON.stringify(next)) return;
-  historyContent.textContent = '';
+  historyContent.textContent = ''; historyText = ''; queryField.value = '';
   credentials = next; start();
 }
 window.addEventListener('message', receive);
@@ -173,6 +227,9 @@ document.getElementById('refresh-history')!.onclick = () => void showHistory();
 latest.onclick = () => { terminal.scrollToBottom(); scrollState(); };
 keyboard.disabled = true;
 keyboard.onclick = () => { if (connected && history.hidden) terminal.focus(); };
-document.getElementById('reconnect')!.onclick = start;
-window.addEventListener('beforeunload', () => { historyRequest?.abort(); socket?.close(); terminal.dispose(); });
+document.getElementById('reconnect')!.onclick = () => start(false);
+window.addEventListener('beforeunload', () => { disposing = true; clearInterval(heartbeat); clearTimeout(reconnectTimer); historyRequest?.abort(); socket?.close(); terminal.dispose(); });
 window.addEventListener('offline', () => { connected = false; socket?.close(); state.textContent = '设备已离线 · 历史可继续阅读'; });
+
+window.addEventListener('online', () => start(false));
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && credentials) start(false); });

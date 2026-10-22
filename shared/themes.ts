@@ -4,15 +4,28 @@ export interface ThemeColors {
   bg: string; sidebar: string; surface: string; hover: string; line: string;
   text: string; muted: string; dim: string; accent: string; accentInk: string;
   amber: string; red: string; blue: string; success: string; magenta: string; cyan: string;
-  accentSurface: string; warningSurface: string; errorSurface: string; overlay: string;
+  addedText: string; removedText: string; accentSurface: string; warningSurface: string; errorSurface: string; overlay: string;
 }
 export interface Theme { id: string; name: string; detail: string; dark: boolean; colors: ThemeColors }
 function mix(base: string, color: string, amount: number): string {
   const channel = (offset: number) => Math.round(parseInt(base.slice(offset, offset + 2), 16) * (1 - amount) + parseInt(color.slice(offset, offset + 2), 16) * amount).toString(16).padStart(2, '0');
   return '#' + channel(1) + channel(3) + channel(5);
 }
-function palette(input: Omit<ThemeColors, 'accentSurface' | 'warningSurface' | 'errorSurface' | 'overlay'>): ThemeColors {
-  return { ...input, accentSurface: mix(input.bg, input.accent, .12), warningSurface: mix(input.bg, input.amber, .09), errorSurface: mix(input.bg, input.red, .1), overlay: '#09090ba8' };
+function contrast(a: string, b: string): number {
+  function light(hex: string): number {
+    const c = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(n => n <= .04045 ? n / 12.92 : ((n + .055) / 1.055) ** 2.4);
+    return c[0] * .2126 + c[1] * .7152 + c[2] * .0722;
+  }
+  return (Math.max(light(a), light(b)) + .05) / (Math.min(light(a), light(b)) + .05);
+}
+function diffInk(color: string, text: string, backgrounds: string[]): string {
+  for (let step = 0; step <= 10; step++) { const ink = mix(color, text, step / 10); if (backgrounds.every(bg => contrast(ink, bg) >= 4.5)) return ink; }
+  return text;
+}
+function palette(input: Omit<ThemeColors, 'accentSurface' | 'warningSurface' | 'errorSurface' | 'overlay' | 'addedText' | 'removedText'>): ThemeColors {
+  const accentSurface = mix(input.bg, input.accent, .12), errorSurface = mix(input.bg, input.red, .1);
+  return { ...input, accentSurface, errorSurface, warningSurface: mix(input.bg, input.amber, .09), overlay: '#09090ba8',
+    addedText: diffInk(input.success, input.text, [accentSurface, input.sidebar]), removedText: diffInk(input.red, input.text, [errorSurface, input.sidebar]) };
 }
 const catppuccin = {
   "mocha": {

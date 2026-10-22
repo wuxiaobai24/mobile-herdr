@@ -27,7 +27,14 @@ process.stdin.on('data', chunk => {
       const text = frame.params.input[0].text;
       event('item/completed', { item: { id: 'user-' + frame.id, type: 'userMessage', content: [{ type: 'text', text }] } });
       event('item/agentMessage/delta', { itemId: 'reply-' + frame.id, delta: '已收到：' + text });
-      if (text.includes('审批')) {
+      if (text.includes('文件审批')) {
+        request = 900 + turn;
+        const changes = text.includes('无内容') ? [] : [{ path: 'app/card.ts', kind: { type: 'update' }, diff: '@@ -1,2 +1,2 @@\n-const color = \"green\";\n+const color = \"blue\";\n export default color;\n' }];
+        event('item/started', { item: { id: 'file-change-1', type: 'fileChange', changes } });
+        send({ id: request, method: 'item/fileChange/requestApproval', params: { threadId: thread.id, turnId: `turn-${turn}`, itemId: 'file-change-1', startedAtMs: Date.now(), reason: '调整卡片颜色' } });
+        event('item/fileChange/patchUpdated', { itemId: 'file-change-1', changes });
+      }
+      if (text.includes('审批') && !text.includes('文件审批')) {
         request = 900 + turn;
         send({ id: request, method: 'item/commandExecution/requestApproval', params: { threadId: thread.id, turnId: `turn-${turn}`, itemId: 'command-1', command: 'git status --short', reason: '查看工作区状态' } });
       }

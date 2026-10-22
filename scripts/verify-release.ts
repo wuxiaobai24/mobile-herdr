@@ -30,6 +30,7 @@ const directory = await mkdtemp(join(tmpdir(), 'mhr-'));
 const fixture = await createNativeFixture();
 let bridge: Bun.Subprocess | undefined;
 let host: Bun.Subprocess | undefined;
+let managed: { wrapper: string; env: NodeJS.ProcessEnv } | undefined;
 try {
   const digest = createHash('sha256').update(await readFile(archive)).digest('hex');
   check('archive matches its SHA-256 sidecar', (await readFile(archive + '.sha256', 'utf8')).startsWith(digest + '  ' + basename(archive)));
@@ -75,6 +76,14 @@ try {
   });
   const token = (await readFile(join(env.MOBILE_HERDR_STATE!, 'token'), 'utf8')).trim();
   const machine: Machine = { id: 'release-test', name: 'release-test', url, token };
+  managed = { wrapper, env: { ...env, MOBILE_HERDR_STATE: join(directory, 'managed-state') } };
+  const started = await run([wrapper, 'background', '--json'], managed.env, directory);
+  const managedStatus = JSON.parse(started.stdout);
+  check('packaged background command starts its own bridge', started.code === 0 && managedStatus.running && !started.stdout.includes('nonce'));
+  const running = await run([wrapper, 'status', '--json'], managed.env, directory);
+  check('packaged status resolves the same background process', running.code === 0 && JSON.parse(running.stdout).pid === managedStatus.pid);
+  const stopped = await run([wrapper, 'stop', '--json'], managed.env, directory);
+  check('packaged stop only stops its own managed bridge', stopped.code === 0 && (await fetch(url + '/api/info', { headers: { Authorization: `Bearer ${token}` } })).ok);
   const page = await fetch(url);
   const html = await page.text();
   check('packaged bridge serves the prebuilt app', page.ok && html.includes('id="root"'));
@@ -126,6 +135,7 @@ try {
   await writeFile(archive + '.verification.json', JSON.stringify(report, null, 2) + '\n');
   console.log(`Release verification: ${checks.length} checks passed on ${report.platform}.\n${archive}`);
 } finally {
+  if (managed) await run([managed.wrapper, 'stop', '--json'], managed.env, directory).catch(() => {});
   if (host) { host.kill(); await host.exited; }
   if (bridge) { bridge.kill(); await bridge.exited; }
   await fixture.close();

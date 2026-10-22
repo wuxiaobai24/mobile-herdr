@@ -15,6 +15,8 @@ test('every theme keeps reading, secondary text and primary actions legible', ()
     }
     expect(contrast(c.muted, c.bg), `${id}: secondary text`).toBeGreaterThanOrEqual(4.5);
     expect(contrast(c.muted, c.surface), `${id}: input placeholder`).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(c.addedText, c.accentSurface), `${id}: additions`).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(c.removedText, c.errorSurface), `${id}: removals`).toBeGreaterThanOrEqual(4.5);
     expect(contrast(c.accentInk, c.accent), `${id}: primary button`).toBeGreaterThanOrEqual(4.5);
   }
 });

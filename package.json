@@ -1,12 +1,13 @@
 {
   "name": "mobile-herdr",
-  "version": "0.2.2-beta.3",
+  "version": "0.2.2-beta.4",
   "private": true,
   "type": "module",
   "main": "index.ts",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "bridge": "bun run server/index.ts",
+    "service": "bun run scripts/bridge.ts",
     "agent": "bun run scripts/agent.ts",
     "install:agent": "bun run scripts/install-agent.ts",
     "pair": "bun run scripts/pair.ts",
@@ -17,7 +18,7 @@
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
     "test": "bun test tests",
-    "test:ui": "bun scripts/verify-ui.ts && bun scripts/verify-native-ui.ts && bun scripts/verify-ssh-ui.ts && bun scripts/verify-appearance-ui.ts",
+    "test:ui": "bun scripts/verify-ui.ts && bun scripts/verify-native-ui.ts && bun scripts/verify-ssh-ui.ts && bun scripts/verify-appearance-ui.ts && bun scripts/verify-experience-ui.ts",
     "test:handoff-live": "bun scripts/verify-handoff-live.ts",
     "release:pack": "bun scripts/release.ts",
     "test:release": "bun scripts/verify-release.ts"

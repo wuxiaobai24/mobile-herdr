@@ -7,6 +7,7 @@ export interface NativeQuestion {
 export interface NativeRequest {
   id: string; kind: 'approval' | 'question' | 'unsupported'; title: string; detail: string;
   questions?: NativeQuestion[];
+  command?: string; cwd?: string; approvalType?: 'command' | 'files'; changes?: { path: string; diff: string }[];
 }
 export interface NativeState {
   runtimeId: string; provider: 'codex' | 'pi'; connected: boolean;
@@ -16,7 +17,7 @@ export interface NativeState {
   conversationId?: string; model?: string; error?: string;
   models?: { id: string; name: string }[];
   messages: ChatMessage[]; requests: NativeRequest[]; truncated: boolean;
-  capabilities: { steer: boolean; approvals: boolean; models: boolean };
+  capabilities: { steer: boolean; approvals: boolean; models: boolean; history?: boolean };
 }
 export interface NativeAction {
   action: 'claim' | 'release' | 'prompt' | 'stop' | 'reply' | 'model';

@@ -1,4 +1,4 @@
-import { AppState } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { useEffect, useState } from 'react';
 import { watch } from '../shared/client';
 import type { Conversation, Machine, Snapshot } from '../shared/protocol';
@@ -17,9 +17,16 @@ export function useConnection(machine: Machine | undefined, session: string, pan
   const [error, setError] = useState('');
   const [generation, setGeneration] = useState(0);
   const networkOnline = useNetworkOnline();
+  function reconnect(): void { setStatus('connecting'); setGeneration(value => value + 1); }
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', state => { if (state === 'active') setGeneration(value => value + 1); });
+    const subscription = AppState.addEventListener('change', state => { if (state === 'active') reconnect(); });
     return () => subscription.remove();
+  }, []);
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const restore = () => { if (document.visibilityState === 'visible') reconnect(); };
+    window.addEventListener('pageshow', restore); document.addEventListener('visibilitychange', restore);
+    return () => { window.removeEventListener('pageshow', restore); document.removeEventListener('visibilitychange', restore); };
   }, []);
   useEffect(() => {
     setSnapshot(undefined); setChat(undefined);
@@ -37,5 +44,5 @@ export function useConnection(machine: Machine | undefined, session: string, pan
     }, (status, error) => { setStatus(status); setError(error ?? ''); });
   }, [machine?.id, machine?.url, machine?.token, session, pane, generation, networkOnline]);
   return { snapshot: snapshotScope === scope ? snapshot : undefined, chat: conversationScope === paneScope ? chat : undefined,
-    native: conversationScope === paneScope ? native : undefined, status, error, reconnect: () => setGeneration(value => value + 1) };
+    native: conversationScope === paneScope ? native : undefined, status, error, reconnect };
 }

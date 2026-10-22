@@ -17,6 +17,7 @@ def vt_stream(ws):
     def message(data):
         frame = json.loads(data)
         frames.append(frame)
+        if frame['type'] == 'ping': ws.send(json.dumps({'type':'pong'}))
         if frame['type'] == 'auth':
             ws.send(json.dumps({'type': 'ready'}))
             ws.send(b'\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[HFull-screen terminal\r\nSwipe to browse history')

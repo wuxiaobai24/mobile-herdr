@@ -1,6 +1,6 @@
 # 私人内测发布流程
 
-首批版本：**0.2.2-beta.3**。渠道为邀请制内测，先给 2–5 位朋友；每人自行部署自己的开发机。当前不需要公共网站、账号系统或手机应用商店。
+首批版本：**0.2.2-beta.4**。渠道为邀请制内测，先给 2–5 位朋友；每人自行部署自己的开发机。当前不需要公共网站、账号系统或手机应用商店。
 
 ## 交付物
 
@@ -16,15 +16,17 @@ bun run test:ui
 
 `test:release` 会构建 Web、生成运行包、解压到临时目录，再从包目录以外启动验证。它只使用隔离 fixture 和本地协议替身，不向用户的 Herdr / CLI 会话提交任务。它也不会重新安装这台机器已有的 `mherdr`。
 
+beta.4 增加终端 / 对话阅读工具、文件 Diff、连接心跳恢复、脱敏诊断与可控后台 bridge。运行包支持 `./bin/mobile-herdr background|status|stop`，源码对应 `bun run service start|status|stop`；打包测试也检查后台启动、状态与停止不会影响另一份前台 fixture。后台为用户进程，不安装 systemd / launchd 或开机自启。
+
 产物位于 `artifacts/releases/`：
 
-- `mobile-herdr-0.2.2-beta.3.tar.gz`：预构建 Web、bundled bridge / 启动器 / Codex host / Pi 扩展、命令入口、内测指南、第三方许可文件。
+- `mobile-herdr-0.2.2-beta.4.tar.gz`：预构建 Web、bundled bridge / 启动器 / Codex host / Pi 扩展、命令入口、内测指南、第三方许可文件。
 - 同名 `.tar.gz.sha256`：压缩包 SHA-256。
 - 同名 `.tar.gz.verification.json`：本机验证的平台、版本、包摘要和实际通过项目。它是**打包冒烟测试**，不等同于真实 Herdr、真实 provider、真机或跨平台认证。
 
 `release.json` 记录版本、构建 Bun、构建时间、源码 HEAD 和 dirty 标识。打包使用显式入口清单，静态资源来自重新构建的 `dist/`，不复制 `.env`、本机 token、聊天记录、测试 fixture 或用户 state；第三方依赖只附带许可文件，运行包无需安装 node_modules。
 
-构建使用 [Bun bundler](https://bun.sh/docs/bundler)；保持现有相对入口路径，将运行依赖打进 JS 包。Pi 扩展以 Node 目标构建。选择此方式是为了保留 Bun PTY、独立 Codex host 和 Pi 进程内加载的现有语义；当前不做单个本地可执行文件或 Docker 镜像。朋友仍须自己安装 Bun 与 Herdr。0.2.2-beta.3 另附 `server/ssh-worker.bundle.js`，供 SSH stdin 临时执行；远端无需安装本项目，但需 Bun。打包冒烟测试显式关闭真实机器发现，避免读取或连接测试者的 SSH hosts。
+构建使用 [Bun bundler](https://bun.sh/docs/bundler)；保持现有相对入口路径，将运行依赖打进 JS 包。Pi 扩展以 Node 目标构建。选择此方式是为了保留 Bun PTY、独立 Codex host 和 Pi 进程内加载的现有语义；当前不做单个本地可执行文件或 Docker 镜像。朋友仍须自己安装 Bun 与 Herdr。0.2.2-beta.4 另附 `server/ssh-worker.bundle.js`，供 SSH stdin 临时执行；远端无需安装本项目，但需 Bun。打包冒烟测试显式关闭真实机器发现，避免读取或连接测试者的 SSH hosts。
 
 ## 发出前
 

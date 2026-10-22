@@ -3,12 +3,13 @@ import { mkdir, chmod, writeFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { NativeAction, NativeState } from '../../shared/native';
-import type { ChatMessage } from '../../shared/protocol';
+import { decodeCursor, historyCursor, historyIdentity, messagePage } from '../history';
+import type { ChatMessage, HistoryPage } from '../../shared/protocol';
 import { BridgeError } from '../rpc';
 
 export interface NativeIdentity { herdrSocket: string; paneId: string; terminalId: string }
 export interface NativeRecord extends NativeIdentity { runtimeId: string; provider: 'codex' | 'pi'; pid: number; endpoint: string }
-export interface NativeEnvelope { method: 'state' | 'action' | 'desktop' | 'attach' | 'shutdown'; input?: NativeAction }
+export interface NativeEnvelope { method: 'state' | 'action' | 'desktop' | 'attach' | 'shutdown' | 'history'; input?: NativeAction; history?: { runtimeId: string; conversationId: string; cursor?: string } }
 
 /** The provider, not the web bridge, owns this state and all delivery receipts. */
 export class NativeController {
@@ -17,6 +18,10 @@ export class NativeController {
   private server?: Server;
   private sockets = new Set<Socket>();
   private receipts = new Map<string, { fingerprint: string; promise: Promise<unknown> }>();
+  private archive: ChatMessage[] = [];
+  private archiveConversation?: string;
+  private archiveLimited = false;
+  readHistory?: (cursor?: string) => Promise<{ messages: ChatMessage[]; nextCursor?: string }>;
   onControl?: () => void;
   beforeClaim?: () => void;
   onShutdown?: () => void;
@@ -27,22 +32,46 @@ export class NativeController {
     const runtimeId = randomUUID();
     this.record = { ...identity, runtimeId, provider, pid: process.pid, endpoint: join(directory, runtimeId + '.sock') };
     this.state = { runtimeId, provider, owner: 'desktop', epoch: 0, revision: 0, connected: true, status: 'idle',
-      messages: [], requests: [], truncated: false, capabilities: { steer: true, approvals: provider === 'codex', models: true } };
+      messages: [], requests: [], truncated: false, capabilities: { steer: true, approvals: provider === 'codex', models: true, history: true } };
   }
   changed(): void { this.state.revision++; }
   message(message: ChatMessage): void {
+    if (this.archiveConversation !== this.state.conversationId) { this.archive = []; this.archiveLimited = false; this.archiveConversation = this.state.conversationId; }
+    const archived = { ...message, truncated: !!message.truncated || message.text.length > 64000 || (message.output?.length ?? 0) > 64000, text: message.text.slice(-64000), output: message.output?.slice(-64000) };
+    const prior = this.archive.find(row => row.id === message.id);
+    if (prior) Object.assign(prior, archived); else this.archive.push(archived);
+    let archiveSize = this.archive.reduce((n, row) => n + row.text.length + (row.output?.length ?? 0), 0);
+    while (this.archive.length > 5000 || archiveSize > 8000000) { const removed = this.archive.shift()!; archiveSize -= removed.text.length + (removed.output?.length ?? 0); this.archiveLimited = true; }
     const existing = this.state.messages.find(row => row.id === message.id);
     if (existing) Object.assign(existing, message); else this.state.messages.push(message);
     // Bound both individual tool output and the complete reconnect snapshot.
     for (const row of this.state.messages) {
-      if (row.text.length > 12000) { row.text = row.text.slice(-12000); this.state.truncated = true; }
-      if (row.output && row.output.length > 12000) { row.output = row.output.slice(-12000); this.state.truncated = true; }
+      const limit = row.role === 'tool' ? 64000 : 12000;
+      if (row.text.length > limit) { row.text = row.text.slice(0, limit); row.truncated = true; this.state.truncated = true; }
+      if (row.output && row.output.length > 12000) { row.output = row.output.slice(0, 12000); row.truncated = true; this.state.truncated = true; }
     }
     let size = this.state.messages.reduce((sum, row) => sum + row.text.length + (row.output?.length ?? 0), 0);
     while (this.state.messages.length > 160 || size > 120000) {
       const row = this.state.messages.shift()!; size -= row.text.length + (row.output?.length ?? 0); this.state.truncated = true;
     }
     this.changed();
+  }
+  async history(query: { runtimeId: string; conversationId: string; cursor?: string }): Promise<HistoryPage> {
+    const identity = historyIdentity([this.state.runtimeId, this.state.conversationId]);
+    if (query.runtimeId !== this.state.runtimeId || query.conversationId !== this.state.conversationId) throw new BridgeError('history_changed', '当前对话已切换。', 409);
+    const position = query.cursor ? decodeCursor(query.cursor, identity) as { provider?: string; before?: string } : {};
+    if (!position || typeof position !== 'object' || (position.provider !== undefined && typeof position.provider !== 'string') || (position.before !== undefined && typeof position.before !== 'string')) throw new BridgeError('invalid_cursor', '历史位置无效。', 400);
+    if (this.archiveConversation !== this.state.conversationId) { this.archive = []; this.archiveLimited = false; this.archiveConversation = this.state.conversationId; }
+    if (!this.readHistory) {
+      const before = position.before ? historyCursor(identity, position.before) : undefined;
+      const page = messagePage(this.archive, identity, before);
+      return { ...page, cursor: page.cursor ? historyCursor(identity, { before: page.messages[0].id }) : undefined, limited: this.archiveLimited };
+    }
+    const source = await this.readHistory(position.provider);
+    if (query.conversationId !== this.state.conversationId) throw new BridgeError('history_changed', '读取期间对话已切换。', 409);
+    const anchor = position.before && source.messages.some(row => row.id === position.before) ? historyCursor(identity, position.before) : undefined;
+    const page = messagePage(source.messages, identity, anchor);
+    return { ...page, hasMore: page.hasMore || !!source.nextCursor, cursor: page.hasMore ? historyCursor(identity, { provider: position.provider, before: page.messages[0].id }) : source.nextCursor ? historyCursor(identity, { provider: source.nextCursor }) : undefined };
   }
   desktop(): void {
     this.state.owner = 'desktop'; this.state.epoch++; this.changed(); this.onControl?.();
@@ -93,6 +122,7 @@ export class NativeController {
             const request = JSON.parse(buffer.slice(0, end)) as NativeEnvelope;
             let result: unknown;
             if (request.method === 'state') result = this.state;
+            else if (request.method === 'history' && request.history) result = await this.history(request.history);
             else if (request.method === 'desktop') { this.desktop(); result = { ok: true }; }
             else if (request.method === 'attach' && this.onAttach) { this.onAttach(); this.desktop(); result = { ok: true }; }
             else if (request.method === 'shutdown' && this.onShutdown) { result = { ok: true }; setTimeout(() => this.onShutdown?.(), 20); }

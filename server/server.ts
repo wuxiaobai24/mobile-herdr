@@ -1,13 +1,15 @@
 import { join, resolve, sep } from 'node:path';
 import type { ServerWebSocket } from 'bun';
-import type { Conversation, Pane, Snapshot } from '../shared/protocol';
+import type { Conversation, Pane, Snapshot, HistoryPage } from '../shared/protocol';
 import { allowedOrigin, cliEnvironment, resolveSession, sessions, validToken, type BridgeConfig } from './config';
 import { BridgeError, rpc } from './rpc';
+import { historyCursor, historyIdentity } from './history';
 import { Transcripts } from './transcripts';
 import type { NativeAction, NativeState } from '../shared/native';
 import { findNative, nativeCall } from './native/registry';
 import { isDesktopReclaim } from '../shared/terminal-keys';
 import { version } from '../package.json';
+import type { DiagnosticReport } from '../shared/diagnostics';
 import type { RemoteGateway } from './ssh-machines';
 
 interface SocketData {
@@ -43,7 +45,9 @@ export function createBridge(config: BridgeConfig, options: { remotes?: RemoteGa
     }
   }
   function nativeChat(state: NativeState): Conversation {
-    return { source: state.provider, binding: 'reported', candidates: [], truncated: state.truncated, messages: state.messages };
+    const identity = historyIdentity([state.runtimeId, state.conversationId]);
+    return { source: state.provider, binding: 'reported', candidates: [], truncated: state.truncated, messages: state.messages,
+      history: state.capabilities.history ? { identity, hasMore: state.truncated, cursor: state.truncated ? historyCursor(identity, { before: state.messages[0]?.id }) : undefined } : undefined };
   }
 
   async function snapshot(socket: string): Promise<Snapshot> {
@@ -130,15 +134,43 @@ export function createBridge(config: BridgeConfig, options: { remotes?: RemoteGa
           if (request.method === 'GET' && url.pathname === '/api/info') {
             return response(request, { name: config.name, version, nativeProtocols: ['codex-app-server', 'pi-extension'], sessions: (await sessions(config)).map(({ socket: _, ...session }) => session) });
           }
+          if (request.method === 'GET' && url.pathname === '/api/diagnostics') {
+            const catalog = options.remotes ? await options.remotes.list() : { machines: [] };
+            const report: DiagnosticReport = { schemaVersion: 1, bridgeVersion: version, bunVersion: Bun.version, platform: process.platform, arch: process.arch,
+              herdr: { connected: false, sessionCount: 0 }, ssh: { enabled: !!options.remotes, online: 0, connecting: 0, offline: 0, disabled: 0 },
+              capabilities: { heartbeat: true, history: true, diff: true }, managed: !!process.env.MOBILE_HERDR_MANAGED_NONCE };
+            for (const row of catalog.machines) report.ssh[row.status]++;
+            try {
+              report.herdr.sessionCount = (await sessions(config)).length;
+              const socket = await resolveSession(config, url.searchParams.get('session') ?? 'default'), state = await snapshot(socket);
+              report.herdr = { ...report.herdr, connected: true, version: state.version, protocol: state.protocol };
+              const pane = state.panes.find(row => row.pane_id === url.searchParams.get('pane'));
+              const native = pane && await nativeState(socket, pane);
+              if (native) report.native = { provider: native.provider, connected: native.connected, status: native.status, control: native.owner === 'desktop' ? 'desktop' : 'mobile', pending: native.requests.length };
+            } catch { /* Report offline without exposing paths or provider error details. */ }
+            return response(request, report);
+          }
           const socket = await resolveSession(config, url.searchParams.get('session') ?? 'default');
           if (request.method === 'GET' && url.pathname === '/api/snapshot') return response(request, await snapshot(socket));
-          const match = url.pathname.match(/^\/api\/panes\/([^/]+)\/(chat|screen|bind|prompt|keys|launch|native)$/);
+          const match = url.pathname.match(/^\/api\/panes\/([^/]+)\/(chat|history|screen|bind|prompt|keys|launch|native)$/);
           if (!match) throw new BridgeError('not_found', '接口不存在。', 404);
           const id = decodeURIComponent(match[1]);
           const pane = await getPane(socket, id);
           const action = match[2];
           if (request.method === 'GET' && action === 'native') return response(request, await nativeState(socket, pane) ?? null);
           if (request.method === 'GET' && action === 'chat') { const native = await nativeState(socket, pane); return response(request, native ? nativeChat(native) : await transcripts.read(socket, pane)); }
+          if (request.method === 'GET' && action === 'history') {
+            const cursor = url.searchParams.get('cursor') ?? undefined;
+            const current = await nativeState(socket, pane);
+            if (current) {
+              if (!current.connected || !current.conversationId) throw new BridgeError('native_offline', '原会话尚未就绪，请稍后重试。', 409);
+              if (!current.capabilities.history) throw new BridgeError('history_unsupported', '此运行实例暂不支持分页；可继续读取当前记录。', 409);
+              const record = await findNative(nativeDirectory, socket, pane);
+              if (!record) throw new BridgeError('native_offline', '原生连接已变化。', 409);
+              return response(request, await nativeCall<HistoryPage>(record.endpoint, { method: 'history', history: { runtimeId: current.runtimeId, conversationId: current.conversationId, cursor } }, 15000));
+            }
+            return response(request, await transcripts.page(socket, pane, cursor));
+          }
           if (request.method === 'GET' && action === 'screen') {
             const lines = Number(url.searchParams.get('lines') ?? 200);
             if (!Number.isInteger(lines) || lines < 1 || lines > 5000) throw new BridgeError('invalid_lines', '历史行数须为 1–5000。', 400);
@@ -203,8 +235,9 @@ export function createBridge(config: BridgeConfig, options: { remotes?: RemoteGa
               if (ws.data.remote?.readyState === WebSocket.OPEN) ws.data.remote.send(message);
               return;
             }
-            if (ws.data.kind !== 'terminal' || !ws.data.process?.terminal) return;
             const input = JSON.parse(String(message));
+            if (input.type === 'ping') { ws.send(JSON.stringify({ type: 'pong' })); return; }
+            if (ws.data.kind !== 'terminal' || !ws.data.process?.terminal) return;
             if (ws.data.nativeEndpoint && input.type === 'input') {
               const state = await nativeCall<NativeState>(ws.data.nativeEndpoint, { method: 'state' });
               if (state.owner !== 'desktop') {

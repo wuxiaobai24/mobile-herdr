@@ -1,9 +1,10 @@
 import { Database } from 'bun:sqlite';
 import { open, realpath, stat } from 'node:fs/promises';
 import { join, relative, isAbsolute } from 'node:path';
-import type { Conversation, Pane, TranscriptCandidate } from '../shared/protocol';
+import type { Conversation, Pane, TranscriptCandidate, HistoryPage } from '../shared/protocol';
 import type { BridgeConfig } from './config';
 import { BridgeError, rpc } from './rpc';
+import { historyIdentity, historyCursor, decodeCursor } from './history';
 import { parseTranscript } from './transcript-parser';
 
 interface Candidate extends TranscriptCandidate { path: string }
@@ -12,7 +13,7 @@ const MAX_BYTES = 8 * 1024 * 1024;
 
 export class Transcripts {
   private bindings = new Map<string, Binding>();
-  private cache = new Map<string, { mtime: number; size: number; messages: Conversation['messages']; truncated: boolean }>();
+  private latest = new Map<string, { signature: string; chat: Conversation }>();
   constructor(private config: BridgeConfig) {}
 
   private root(agent: string): string | null {
@@ -104,7 +105,7 @@ export class Transcripts {
     this.bindings.set(`${socket}:${pane.pane_id}`, { path: candidate.path, agent: candidate.agent, identity: await this.identity(socket, pane) });
   }
 
-  async read(socket: string, pane: Pane): Promise<Conversation> {
+  private async locate(socket: string, pane: Pane): Promise<{ path: string | null; binding: Conversation['binding'] }> {
     let path: string | null = null;
     let binding: Conversation['binding'] = 'none';
     const agent = pane.agent ?? '';
@@ -123,43 +124,45 @@ export class Transcripts {
         path = await this.trustedPath(agent, selected.path); binding = 'selected';
       } else this.bindings.delete(`${socket}:${pane.pane_id}`);
     }
-    if (!path) {
-      const candidates = (await this.candidates(pane)).map(({ path: _path, ...candidate }) => candidate);
-      return { source: 'unavailable', messages: [], binding: 'none', candidates, truncated: false };
-    }
+    return { path, binding };
+  }
+  async read(socket: string, pane: Pane): Promise<Conversation> {
+    const { path, binding } = await this.locate(socket, pane);
+    if (!path) return { source: 'unavailable', messages: [], binding: 'none', candidates: (await this.candidates(pane)).map(({ path: _, ...candidate }) => candidate), truncated: false };
+    const info = await stat(path), signature = JSON.stringify([socket, pane.terminal_id, pane.agent_session, info.ino, info.size, info.mtimeMs, binding]);
+    const cached = this.latest.get(path); if (cached?.signature === signature) return cached.chat;
+    const page = await this.page(socket, pane);
+    const { messages, ...history } = page;
+    const chat: Conversation = { source: pane.agent as Conversation['source'], binding, candidates: [], messages, history, truncated: page.hasMore || !!page.limited };
+    if (this.latest.size >= 32) this.latest.delete(this.latest.keys().next().value!);
+    this.latest.set(path, { signature, chat }); return chat;
+  }
+  async page(socket: string, pane: Pane, cursor?: string): Promise<HistoryPage> {
+    const { path } = await this.locate(socket, pane);
+    if (!path) throw new BridgeError('transcript_unbound', '请先选择当前 pane 的聊天记录。', 409);
     const info = await stat(path);
-    const cached = this.cache.get(path);
-    if (cached && cached.mtime === info.mtimeMs && cached.size === info.size) {
-      return { source: agent as Conversation['source'], binding, candidates: [], messages: cached.messages, truncated: cached.truncated };
-    }
+    const identity = historyIdentity([socket, pane.terminal_id, pane.agent, pane.agent_session, path, info.ino, info.birthtimeMs]);
+    const position = cursor ? decodeCursor(cursor, identity) : info.size;
+    if (!Number.isSafeInteger(position) || Number(position) < 0 || Number(position) > info.size) throw new BridgeError('history_changed', '历史文件已变化，请重新打开对话。', 409);
+    const end = Number(position), start = Math.max(0, end - MAX_BYTES);
     const file = await open(path, 'r');
-    let text: string;
-    try {
-      const start = Math.max(0, info.size - MAX_BYTES);
-      const buffer = Buffer.alloc(Math.min(info.size, MAX_BYTES));
-      const { bytesRead } = await file.read(buffer, 0, buffer.length, start);
-      text = buffer.subarray(0, bytesRead).toString('utf8');
-      if (start > 0) text = text.slice(text.indexOf('\n') + 1);
-    } finally { await file.close(); }
-    // Ignore the last record until its terminating newline has been written.
-    const lines = text.split('\n').slice(0, -1);
-    const parsed = parseTranscript(lines, agent);
+    let buffer: Buffer;
+    try { buffer = Buffer.alloc(end - start); const result = await file.read(buffer, 0, buffer.length, start); buffer = buffer.subarray(0, result.bytesRead); }
+    finally { await file.close(); }
+    let offset = start;
+    if (start > 0) { const boundary = buffer.indexOf(10); if (boundary < 0) return { identity, messages: [], hasMore: true, cursor: historyCursor(identity, start), limited: true }; offset += boundary + 1; buffer = buffer.subarray(boundary + 1); }
+    const lines = buffer.toString('utf8').split('\n').slice(0, -1), positions = new Map<string, number>();
+    const parsed = parseTranscript(lines, pane.agent ?? '', { offset, positions });
     const messages: Conversation['messages'] = [];
     let bytes = 0;
-    let limited = false;
-    // Bound the initial phone payload as well as the filesystem read.
-    for (let index = parsed.length - 1; index >= 0; index--) {
-      const item = parsed[index];
-      const text = item.text.length > 64000 ? '…\n' + item.text.slice(-64000) : item.text;
-      limited ||= text !== item.text;
-      const message = { ...item, text };
-      const size = Buffer.byteLength(JSON.stringify(message));
-      if (bytes + size > 256 * 1024) { limited = true; break; }
-      bytes += size; messages.unshift(message);
+    for (let i = parsed.length - 1; i >= 0 && messages.length < 60; i--) {
+      const row = parsed[i], text = row.text.length > 64000 ? '…\n' + row.text.slice(-64000) : row.text;
+      const message = { ...row, text, ...(text !== row.text ? { truncated: true } : {}) }, size = Buffer.byteLength(JSON.stringify(message));
+      if (bytes + size > 256000 && messages.length) break;
+      messages.unshift(message); bytes += size;
     }
-    const truncated = limited || info.size > MAX_BYTES || parsed.length >= 500;
-    if (this.cache.size >= 32) this.cache.delete(this.cache.keys().next().value!);
-    this.cache.set(path, { mtime: info.mtimeMs, size: info.size, messages, truncated });
-    return { source: agent as Conversation['source'], binding, candidates: [], messages, truncated };
+    const earlier = messages.length ? positions.get(messages[0].id)! : start;
+    const hasMore = start > 0 || parsed.length > messages.length;
+    return { identity, messages, hasMore, cursor: hasMore ? historyCursor(identity, earlier) : undefined };
   }
 }

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { NativeController } from '../server/native/controller';
 import { CodexRuntime } from '../server/native/codex';
 import { nativeCall } from '../server/native/registry';
+import type { HistoryPage } from '../shared/protocol';
 import type { NativeAction, NativeState } from '../shared/native';
 import { localModel } from './local-model';
 
@@ -46,6 +47,9 @@ live('installed Codex: native phone turn and official TUI share the same app-ser
     await until(() => control.state.messages.filter(row => row.role === 'user').length === 2 && control.state.status === 'idle');
     expect(control.state.conversationId).toBe(thread);
     expect(control.state.messages.filter(row => row.role === 'user')).toHaveLength(2);
+    const epoch = control.state.epoch;
+    const history = await nativeCall<HistoryPage>(control.record.endpoint, { method: 'history', history: { runtimeId: control.state.runtimeId, conversationId: thread! } });
+    expect(history.messages.filter(row => row.role === 'user')).toHaveLength(2); expect(control.state.epoch).toBe(epoch);
   } finally { tui?.kill(); if (tui) await tui.exited; terminal?.close(); await runtime.close(); await control.close(); model.close(); await rm(directory, { recursive: true, force: true }); }
 }, 30000);
 

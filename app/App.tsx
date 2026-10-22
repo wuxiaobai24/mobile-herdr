@@ -19,6 +19,7 @@ import Terminal from './components/Terminal';
 import { useNativeControl } from './useNativeControl';
 import { NativeSession } from './components/NativeSession';
 import { NativeRequests } from './components/NativeRequests';
+import { DiagnosticsPanel } from './components/DiagnosticsPanel';
 import { AppearancePanel } from './components/AppearancePanel';
 
 function stateColor(status: string, colors: ThemeColors): string {
@@ -78,6 +79,8 @@ function Workbench(): React.JSX.Element {
   const desktop = width >= 900;
   const keyboardVisible = useKeyboardVisible();
   const compact = !desktop && (keyboardVisible || height < 560);
+  const [visitedTerminal, setVisitedTerminal] = useState('');
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [pairing] = useState(consumePairing);
   const [machines, setMachines] = useState<Machine[]>([]);
@@ -199,6 +202,8 @@ function Workbench(): React.JSX.Element {
     catch { notify('移除开发机失败。', true); }
   }
   function selectPane(id: string): void { setPaneId(id); setDrawer(false); setMode('chat'); setNotice(''); }
+  const terminalKey = `${machine?.id}:${session}:${pane?.pane_id}`;
+  useEffect(() => { if (mode === 'terminal') setVisitedTerminal(terminalKey); }, [mode, terminalKey]);
   const search = query.trim().toLowerCase();
   const visibleWorkspaces = snapshot?.workspaces.filter(item => {
     const panes = snapshot.panes.filter(pane => pane.workspace_id === item.workspace_id);
@@ -255,7 +260,8 @@ function Workbench(): React.JSX.Element {
             </View>
             {!native && pane.agent_status === 'blocked' && <Pressable onPress={() => setMode('terminal')} style={[styles.row, { gap: 10, backgroundColor: colors.warningSurface, paddingHorizontal: 20, paddingVertical: 12 }]}><Bell size={16} color={colors.amber} /><Text style={{ flex: 1, color: colors.amber, fontSize: 13 }}>Agent 正在等待你确认，打开终端查看并操作。</Text><ArrowRight size={16} color={colors.amber} /></Pressable>}
             <NativeSession state={native} control={control} provider={pane.agent} online={online} compact={compact} onError={text => notify(text, true)} />
-            {mode === 'terminal' ? <Terminal key={`${machine.id}:${session}:${pane.pane_id}`} machine={machine} session={session} pane={pane.pane_id} /> : <View style={{ flex: 1, width: '100%', maxWidth: 880, alignSelf: 'center', minHeight: 0 }}>
+            {(mode === 'terminal' || visitedTerminal === terminalKey) && <View style={{ flex: mode === 'terminal' ? 1 : 0, display: mode === 'terminal' ? 'flex' : 'none', minHeight: 0 }}><Terminal key={terminalKey} machine={machine} session={session} pane={pane.pane_id} /></View>}
+            {mode === 'chat' && <View style={{ flex: 1, width: '100%', maxWidth: 880, alignSelf: 'center', minHeight: 0 }}>
               <Conversation native={!!native} footer={native && <NativeRequests state={native} control={control} online={online} onError={text => notify(text, true)} />} key={`chat:${machine.id}:${session}:${pane.pane_id}:${native?.runtimeId}:${native?.conversationId}`} chat={connection.chat} machine={machine} session={session} pane={pane} online={online} onTerminal={() => setMode('terminal')} onBound={connection.reconnect} onError={text => notify(text, true)} />
               <Composer native={native} control={control} compact={compact} key={`composer:${machine.id}:${session}:${pane.pane_id}:${native?.runtimeId}:${native?.conversationId}`} machine={machine} session={session} pane={pane} online={online} onError={text => notify(text, true)} onSent={() => native ? undefined : notify('消息已送入原会话')} onTerminal={() => setMode('terminal')} />
             </View>}
@@ -273,9 +279,11 @@ function Workbench(): React.JSX.Element {
         <View style={[styles.row, { gap: 10 }]}><Pressable accessibilityRole="button" accessibilityLabel={`选择开发机 ${item.name}`} disabled={item.remoteStatus === 'disabled'} onPress={() => { setActiveId(item.id); setMachinePanel(false); setDrawer(false); }} style={[styles.row, { flex: 1, minHeight: 48, gap: 12, opacity: item.remoteStatus === 'disabled' ? 0.5 : 1 }]}><Monitor size={20} color={activeId === item.id ? colors.accent : colors.muted} /><View style={{ flex: 1, gap: 3 }}><Text style={styles.text}>{item.name}</Text><Text style={[styles.muted, { fontSize: 12 }]}>{item.remote ? `Herdr SSH · ${item.remoteSession} · ${{ connecting: '连接中', online: '已连接', offline: '已断开', disabled: '已禁用' }[item.remoteStatus ?? 'offline']}` : item.url}</Text></View>{activeId === item.id && <Check size={16} color={colors.accent} />}</Pressable>{!item.remote && <IconButton label={`移除 ${item.name}`} onPress={() => removeMachine(item.id)}><Trash2 size={16} color={colors.dim} /></IconButton>}</View>
         {!!item.remoteError && <Text style={{ color: colors.amber, fontSize: 13, lineHeight: 21 }}>{item.remoteError}</Text>}
       </View>)}
+      <Pressable accessibilityRole="button" accessibilityLabel="连接诊断" onPress={() => { setMachinePanel(false); setDiagnosticsOpen(true); }} style={[styles.button, styles.secondary]}><Text style={{ color: colors.text, fontSize: 14 }}>连接诊断</Text></Pressable>
       <Pressable onPress={() => { setMachinePanel(false); setShowConnect(true); }} style={styles.button}><Plus size={17} color={colors.accentInk} /><Text style={styles.buttonText}>添加开发机</Text></Pressable>
     </View></ScrollView></Modal>
     <Modal visible={help} transparent animationType="fade" onRequestClose={() => setHelp(false)}><ScrollView style={{ flex: 1, backgroundColor: colors.overlay }} contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}><View style={{ maxWidth: 440, width: '100%', backgroundColor: colors.sidebar, padding: 26, gap: 18, borderRadius: 14, borderWidth: 1, borderColor: colors.line }}><Text style={{ color: colors.text, fontSize: 21 }}>继续同一个 Herdr</Text><Text style={styles.text}>开发机 → session → workspace → tab → pane。这里读取相同的 session，消息直接发给原 pane 中的 agent。</Text><Text style={styles.muted}>聊天记录优先使用 Herdr 上报的 session 标识。没有标识时，需要选择对应记录。对话和终端可以随时切换。</Text><Text style={styles.muted}>网络断开后会自动重连。草稿保留在当前设备，消息不会自动重发。离开页面或关闭客户端不会停止 agent。</Text><Pressable style={styles.button} onPress={() => setHelp(false)}><Text style={styles.buttonText}>知道了</Text></Pressable></View></ScrollView></Modal>
+    <DiagnosticsPanel visible={diagnosticsOpen} machine={machine} session={session} pane={pane?.pane_id} onClose={() => setDiagnosticsOpen(false)} />
     <AppearancePanel visible={appearanceOpen} onClose={() => setAppearanceOpen(false)} />
     <ConnectDialog visible={showConnect} canClose={!!machines.length} onClose={() => setShowConnect(false)} onConnect={addMachine} pairing={pairing} />
   </SafeAreaView>;

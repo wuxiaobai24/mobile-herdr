@@ -3,6 +3,7 @@ import type { NativeAction, NativeRequest } from '../../shared/native';
 import type { ChatMessage } from '../../shared/protocol';
 import { NativeController } from './controller';
 import { BridgeError } from '../rpc';
+import { suppliedChanges } from '../../shared/diff';
 import { version } from '../../package.json';
 
 type Frame = Record<string, any>;
@@ -38,6 +39,13 @@ export class CodexRuntime {
         control.state.models = (catalog.data ?? []).slice(0, 100).map((row: Frame) => ({ id: row.model ?? row.id, name: row.displayName ?? row.model ?? row.id })); control.changed();
       } catch { control.state.capabilities.models = false; control.changed(); }
     }).catch(error => this.offline(error));
+    control.readHistory = async cursor => {
+      await this.initialized;
+      const threadId = control.state.conversationId;
+      if (!threadId) throw new BridgeError('native_not_ready', '对话尚未准备好。', 409);
+      const page = await this.call('thread/turns/list', { threadId, cursor, limit: 20, sortDirection: 'desc', itemsView: 'full' });
+      return { messages: [...(page.data ?? [])].reverse().flatMap((turn: Frame) => (turn.items ?? []).map((item: Frame) => this.itemMessage(item)).filter(Boolean)), nextCursor: page.nextCursor ?? undefined };
+    };
     control.perform = input => this.perform(input);
     control.state.ready = false;
     control.beforeClaim = () => {
@@ -109,7 +117,10 @@ export class CodexRuntime {
         const questions = frame.method === 'item/tool/requestUserInput' && Array.isArray(p.questions) ? p.questions : undefined;
         const request: NativeRequest = { id, kind: approval ? 'approval' : questions ? 'question' : 'unsupported',
           title: questions ? 'Agent 需要你的回答' : approval ? '需要你的确认' : '请在电脑处理此请求',
-          detail: questions ? '' : String(p.command ?? p.reason ?? p.message ?? '请交还电脑，在终端处理这个请求。').slice(0, 12000), questions };
+          approvalType: frame.method === 'item/fileChange/requestApproval' ? 'files' : 'command',
+          command: typeof p.command === 'string' ? p.command.slice(0, 12000) : undefined, cwd: typeof p.cwd === 'string' ? p.cwd.slice(0, 1024) : undefined,
+          changes: suppliedChanges(p.changes ?? this.control.state.messages.find(row => row.id === p.itemId)?.text).map(file => ({ path: file.path, diff: file.patch })),
+          detail: questions ? '' : String(p.reason ?? p.message ?? (p.command ? '' : '请交还电脑，在终端处理这个请求。')).slice(0, 12000), questions };
         this.control.state.requests.push(request); this.control.state.status = 'blocked'; this.control.changed();
       } else if (this.control.state.owner !== 'desktop') {
         this.control.state.requests.push({ id, kind: 'unsupported', title: '后台任务需要你处理', detail: '请交还电脑，在原始终端处理后台任务的请求。' });
@@ -132,6 +143,10 @@ export class CodexRuntime {
       this.requests.delete(String(p.requestId)); state.requests = state.requests.filter(row => row.id !== String(p.requestId));
       state.status = state.requests.length ? 'blocked' : this.turnId ? 'working' : 'idle';
     }
+    if (method === 'item/fileChange/patchUpdated') {
+      this.control.message({ id: p.itemId, role: 'tool', toolName: 'fileChange', text: JSON.stringify(p.changes ?? []) });
+      for (const request of state.requests) if (this.requests.get(request.id)?.params?.itemId === p.itemId) request.changes = suppliedChanges(p.changes).map(file => ({ path: file.path, diff: file.patch }));
+    }
     if (method === 'item/started' || method === 'item/completed') this.item(p.item);
     if (method === 'item/agentMessage/delta' || method === 'item/commandExecution/outputDelta') {
       const previous = state.messages.find(row => row.id === p.itemId);
@@ -145,15 +160,16 @@ export class CodexRuntime {
     if (method === 'thread/status/changed' && p.status?.type === 'idle' && !state.requests.length) state.status = 'idle';
     this.control.changed();
   }
-  private item(item: Frame): void {
+  private itemMessage(item: Frame): ChatMessage | undefined {
     if (!item?.id) return;
     let message: ChatMessage;
     if (item.type === 'userMessage') message = { id: item.id, role: 'user', text: (item.content ?? []).map((row: Frame) => row.text ?? (row.type === 'image' ? '[图片]' : '')).join('\n') };
     else if (['agentMessage', 'plan'].includes(item.type)) message = { id: item.id, role: 'assistant', text: item.text ?? '' };
     else if (item.type === 'reasoning') return;
     else message = { id: item.id, role: 'tool', toolName: item.type, text: item.command ?? item.query ?? (item.changes ? JSON.stringify(item.changes) : item.name ?? item.type), output: item.aggregatedOutput ?? (item.result ? JSON.stringify(item.result) : undefined) };
-    this.control.message(message);
+    return message;
   }
+  private item(item: Frame): void { const message = this.itemMessage(item); if (message) this.control.message(message); }
   private async selectThread(result: Frame): Promise<void> {
     const state = this.control.state;
     const thread = result.thread;

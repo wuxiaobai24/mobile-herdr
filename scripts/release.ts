@@ -47,19 +47,22 @@ APP_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 case "\${1:-help}" in
   help|--help|-h)
     echo 'Mobile Herdr ${version} — private beta'
-    echo 'Usage: ./bin/mobile-herdr <start|pair|install-agent|agent|version>'
+    echo 'Usage: ./bin/mobile-herdr <start|background|status|stop|pair|install-agent|agent|version>'
     echo 'start: run the bridge; configure its address with MOBILE_HERDR_HOST/PORT'
     echo 'pair --url <phone-accessible URL>: print a private pairing QR code'
     echo 'install-agent [--bin-dir <directory>]: install mherdr for Herdr panes'
     exit 0 ;;
   version|--version) echo '${version}'; exit 0 ;;
   start) ENTRY='server/index.ts' ;;
+  background|status|stop) ENTRY='scripts/bridge.ts' ;;
   pair) ENTRY='scripts/pair.ts' ;;
   install-agent) ENTRY='scripts/install-agent.ts' ;;
   agent) ENTRY='scripts/agent.ts' ;;
   *) echo 'Unknown command; use --help.' >&2; exit 2 ;;
 esac
+COMMAND=$1
 shift
+if [ "$ENTRY" = "scripts/bridge.ts" ]; then set -- "$COMMAND" "$@"; fi
 BUN_BIN=\${MOBILE_HERDR_BUN:-bun}
 if ! command -v "$BUN_BIN" >/dev/null 2>&1; then
   echo 'Bun 1.4+ is required. See https://bun.sh/docs/installation' >&2
@@ -79,7 +82,7 @@ export async function createRelease(outputDirectory = join(root, 'artifacts/rele
   try {
     await mkdir(join(destination, 'bin'), { recursive: true });
     // Explicit allowlist: no home state, credentials, transcripts, tests or build artifacts.
-    for (const entry of ['server/index.ts', 'scripts/agent.ts', 'scripts/native-host.ts', 'scripts/pair.ts', 'scripts/install-agent.ts']) {
+    for (const entry of ['server/index.ts', 'scripts/bridge.ts', 'scripts/agent.ts', 'scripts/native-host.ts', 'scripts/pair.ts', 'scripts/install-agent.ts']) {
       await bundle(entry, join(destination, entry));
     }
     await bundle('server/ssh-worker.ts', join(destination, 'server/ssh-worker.bundle.js'));

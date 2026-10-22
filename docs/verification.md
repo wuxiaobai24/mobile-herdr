@@ -113,3 +113,16 @@ Oil UI 版本检查记录：使用 0.18.1，提示可更新至 0.23.9，本任�
 - 动效证据：`artifacts/ui/motion/conversation-entry/`、`mode-switch/`、`send-feedback/` 的 start / mid / end 帧。内容淡入为生产 CSS 的重新触发采样；分段切换采样真实 CSS transition；按压使用 Chromium 强制 `:active` 状态采样生产 CSS，发送动作另走真实 click，不能据此宣称物理触屏手感通过。外观面板淡入在 `artifacts/appearance-ui/interaction.webm`；其中的主动页面刷新有意验证设置持久化。
 - 完成一轮独立存量界面润色评审，不打分。未发现静态阻断；采纳“长按复制”改为“选择复制”，补齐关键 CSS 动效证据。保留字体预览句和主题深浅说明作为调节依据。报告见 `docs/ui-theme-review.md`。
 - `bun run test:release`：21 checks 通过（Linux x64），包含新主题的许可与来源随包分发。源码与运行包为 beta.3；未重启用户现有 Herdr 服务，也未终止任何原生 agent。
+
+## 会话恢复、阅读工具、Diff 与后台运行（0.2.2-beta.4）
+
+- `bun run typecheck`、`bun run build` 与 `git diff --check` 通过。最终代码执行 `MOBILE_HERDR_LIVE=1 MOBILE_HERDR_NATIVE_LIVE=1 MOBILE_HERDR_SSH_LIVE=1 bun test tests`：**32 pass、0 skip、0 fail，241 assertions**。包含真实 Herdr 0.9.3、Codex 0.162.1、Pi 1.2.0 与临时 OpenSSH；provider 请求使用 loopback 模型替身，不调用付费模型。
+- 新增后端检查覆盖 207 条含中文、无原生消息 ID 的 transcript 完整分页，追加后游标稳定、身份变化拒绝；240 条原生存档分页不改变控制权和 epoch；静默 WebSocket 超时重连、只发 auth / ping、不重放写入；Diff 行号、多个文件、新增与工具文本；诊断白名单；后台启停、重复启动和篡改 PID / nonce 不结束其他进程。
+- Codex 历史读取调用同一已注册 app-server 的 `thread/turns/list`，真实集成检查读取后仍为原 runtime / thread，epoch 不变。官方本机生成的协议 schema 确认文件审批参数通过 itemId 关联此前的 fileChange 与后续 patchUpdated，没有启动第二份 agent。Pi 使用当前运行实例有限存档；旧 broker 能力门控，不自动迁移或重启。
+- 重建静态资源后连续三次执行完整 `bun run test:ui`：每次 **31 legacy + 20 native + 14 SSH + 25 appearance/terminal + 20 experience = 110 checks**，均通过，0 uncaught errors。最后补充各 parser 路径的截断标识与对话更换时的存档边界清理后，另重跑上述完整后端测试通过；未改变静态页面布局。
+- 新浏览器检查覆盖 Markdown Diff 与补丁复制、前插历史保持锚点、查找较早消息、上一问、聊天 / 终端切换保留阅读位置且终端不重连；终端搜索、选择优先复制、顶部 / 底部；文件审批原位 Diff、拒绝及缺少修改内容时禁止允许；pageshow 恢复读取新控制权并保留草稿；诊断复制脱敏。320px 宽、450px 可视高度与横屏均有布局检查。终端浏览没有产生 input frame。
+- 视觉证据在 `artifacts/experience-ui/`，含 `verification.json`、`interaction.webm`、手机 Diff / 文件审批 / 终端查找 / 连接诊断截图。一轮独立存量界面评审后，将终端查找拆为两排，主 Agent 复看修改后的截图；见 `ui-experience-review.md`。六主题 Diff 增删文字另验证 4.5:1 对比度，保留原 ANSI 颜色。
+- `bun run test:release`：**24 项打包冒烟检查通过（Linux x64）**，新增运行包后台启动、同一进程状态与仅停止自身 bridge；原前台 fixture 仍可访问。包含预构建页面、管理入口、SSH worker、原生启动器与许可，不需安装依赖。交付前从 clean HEAD 重新打包，使用 `release.json` 与 SHA-256 对应源码和最终文件。
+- 所有写入、PTY、管理和 provider 测试只操作自身创建并清理的隔离 fixture / session / 进程。未重启、升级或停止用户的 Herdr，未停止用户的原生 agent，也未替换已运行的旧 bridge。另一台电脑的 SSH profiles 仍需在那台电脑运行入口才能发现。
+
+仍未完成真实手机键盘、中文输入法、锁屏 / 系统后台、macOS 或 ARM64 验收。后台命令不安装系统服务，不提供开机自启或崩溃自恢复；诊断仅比较页面与 bridge 版本，不查询远程更新。搜索仅覆盖已加载消息，历史受 provider / Herdr 保留范围限制，详细边界见 `beta-guide.md`。
