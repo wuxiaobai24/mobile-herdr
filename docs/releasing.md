@@ -45,7 +45,7 @@ bun run test:ui
 
 通过你们已有的私人文件渠道发送 **tar.gz + sha256 + 内测指南链接或文件**；可以另附验证报告和 `docs/beta-invitation.md` 的邀请文字。不要把本机配对二维码、token、机器 state 或聊天截图当作安装配置发出。每位朋友扫码连接自己的开发机。
 
-当前没有配置 Git remote，也没有创建公开仓库或上传产物。后续如果需要私有 GitHub Release，先确定仓库，提交候选代码，以同名版本 tag 创建 **prerelease**，上传上述产物并附指南；不得把 dirty 快照当作来源明确的正式版本。公开开源、npm 发布与项目许可证选择另行决定；目前 `package.json.private` 保持 true。
+源码已推送到私有仓库 [wuxiaobai24/mobile-herdr](https://github.com/wuxiaobai24/mobile-herdr)，本地 `origin` 指向该仓库。内测产物仍在本地，尚未创建 GitHub Release。后续如需通过私仓分发安装包，提交候选代码，以同名版本 tag 创建 **prerelease**，上传上述产物并附指南；不得把 dirty 快照当作来源明确的正式版本。公开开源、npm 发布与项目许可证选择另行决定；目前 `package.json.private` 保持 true。
 
 ## 收集问题与下一版
 
