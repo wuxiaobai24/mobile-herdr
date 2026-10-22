@@ -4,6 +4,16 @@
 
 移动 Web 支持 Codex / Pi 原生 Chat 与电脑终端之间交接控制权，以及原始终端、多开发机、草稿恢复和断网重连。保留 Expo 代码结构供以后做原生端，**本次不交付原生安装包**。
 
+## 朋友内测
+
+当前准备版本为 **0.2.2-beta.1**。可以分发预构建运行包，接收方安装 Bun / Herdr 后解压启动，无需安装前端依赖或构建页面。首批仅 Linux x64 完成打包验证，其他平台与真实手机行为仍需验收。
+
+- 使用者：[安装、配对、升级与回退](docs/beta-guide.md)
+- 维护者：[打包验证与发布步骤](docs/releasing.md)
+- [可直接转发的邀请文字](docs/beta-invitation.md)
+
+在源码目录执行 `bun run test:release` 可生成并验证内测包，输出至 `artifacts/releases/`；当前未上传到外部渠道。
+
 ## 启动
 
 需要 **Bun 1.4+、Herdr 0.9.3 / protocol 22、Linux 或 macOS**。先在开发机启动原来的 Herdr。Bridge 不会替你重启 Herdr。

@@ -10,7 +10,7 @@ export const styles = StyleSheet.create({
   muted: { color: colors.muted, fontSize: 13, lineHeight: 20 },
   mono: { fontFamily: mono },
   row: { flexDirection: 'row', alignItems: 'center' },
-  button: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 8, minHeight: 44, paddingHorizontal: 14, backgroundColor: colors.accent },
+  button: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 10, minHeight: 44, paddingHorizontal: 14, backgroundColor: colors.accent },
   buttonText: { fontSize: 14, fontWeight: '600', color: colors.accentInk },
   secondary: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line },
   field: { borderWidth: 1, borderColor: colors.line, borderRadius: 8, color: colors.text, padding: 13, fontSize: 16, backgroundColor: colors.bg },

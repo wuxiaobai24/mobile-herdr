@@ -14,6 +14,10 @@ def check(name, condition=True):
     assert condition, name
     checks.append(name)
 
+def snapshot(page, name):
+    page.wait_for_function("() => document.getAnimations().filter(a => a.effect.getComputedTiming().iterations !== Infinity).every(a => a.playState !== 'running')")
+    page.screenshot(path=str(artifacts / name))
+
 def connect(page):
     page.goto(url)
     page.wait_for_load_state('networkidle')
@@ -31,7 +35,7 @@ with sync_playwright() as p:
     composer = page.get_by_label('发给原会话的消息', exact=True)
     composer.fill('先写草稿')
     expect(page.get_by_label('发送消息', exact=True)).to_be_disabled()
-    page.screenshot(path=str(artifacts / 'phone-desktop-owner.png'))
+    snapshot(page, 'phone-desktop-owner.png')
     check('desktop ownership allows drafting and blocks phone sends')
     page.get_by_label('在手机继续', exact=True).click()
     expect(page.get_by_text('你正在手机上继续', exact=True)).to_be_visible()
@@ -82,7 +86,7 @@ with sync_playwright() as p:
     composer.fill('需要审批')
     page.get_by_label('发送消息', exact=True).click()
     expect(page.get_by_label('允许本次操作', exact=True)).to_be_visible()
-    page.screenshot(path=str(artifacts / 'phone-approval.png'))
+    snapshot(page, 'phone-approval.png')
     page.get_by_label('允许本次操作', exact=True).click()
     expect(page.get_by_text('需要你的确认', exact=True)).not_to_be_visible()
     check('native approval is answered in chat')
@@ -100,7 +104,7 @@ with sync_playwright() as p:
         try:
             page.wait_for_function("() => document.querySelector('[aria-label=\"发送消息\"]').getBoundingClientRect().bottom <= innerHeight + 1", timeout=3000)
         except Exception:
-            page.screenshot(path=str(artifacts / 'layout-failure.png'))
+            snapshot(page, 'layout-failure.png')
             raise
         box = page.get_by_label('发送消息', exact=True).bounding_box()
         check(f'{width}x{height}: composer stays reachable', box and box['y'] + box['height'] <= height + 1)
@@ -112,7 +116,7 @@ with sync_playwright() as p:
     expect(page.get_by_text('会话', exact=True)).not_to_be_visible()
     box = page.get_by_label('发送消息', exact=True).bounding_box()
     check('keyboard viewport retains takeover and send controls', box and box['y'] + box['height'] <= 451)
-    page.screenshot(path=str(artifacts / 'phone-keyboard.png'))
+    snapshot(page, 'phone-keyboard.png')
     page.evaluate("delete visualViewport.height; visualViewport.dispatchEvent(new Event('resize'))")
     composer.blur()
     page.get_by_label('交还电脑', exact=True).click()
@@ -120,10 +124,11 @@ with sync_playwright() as p:
     expect(page.get_by_label('发送消息', exact=True)).to_be_disabled()
     expect(second.get_by_text('电脑正在控制', exact=True)).to_be_visible()
     check('handoff returns the same runtime to desktop and updates other devices')
-    page.screenshot(path=str(artifacts / 'phone-returned.png'))
+    snapshot(page, 'phone-returned.png')
     check('no uncaught browser errors', not errors)
     other.close()
     context.close()
+    Path(page.video.path()).replace(artifacts / 'interaction.webm')
     browser.close()
 
 print(f'Native browser verification: {len(checks)} checks passed; {len(errors)} uncaught errors.')

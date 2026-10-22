@@ -71,3 +71,22 @@ Oil UI 版本检查记录：使用 0.18.1，提示可更新至 0.23.9，本任�
 - 最终构建的 `bun run test:ui`：**22 项兼容模式 + 20 项原生检查通过，0 uncaught errors**；覆盖既有手机宽度、横屏和缩小 visualViewport。这一轮未改变界面布局，不替代真实手机验收。
 - 恢复 TUI 期间通过本地 attach 阶段暂停接管，恢复完成后再开放；协议测试确认此时手机 claim 被拒绝。启动失败且尚未选择对话时清理本次新建后台，不替换已经存在的 agent。
 - 当前明确拒绝 Codex `--profile` / `--worktree`；使用支持的 `-c` 配置或原 CLI 的终端兼容模式。旧版运行实例缺少私有重连配置时不猜参数，须先完成任务，再停止并按精确 ID 恢复。其他实机、Pi 自定义 UI 和长期稳定性边界仍如上。
+
+## UI / UX 润色验证（2026-10-22）
+
+- `bun run typecheck`、`bun run build` 和 `git diff --check` 通过。构建仍有主包超过 500 kB 的建议性提示，当前 gzip 约 169 kB。
+- `bun test tests`：**18 通过、3 跳过、0 失败，98 次断言**。本轮未开启真实 Herdr / 原生 provider 集成测试，也未操作用户已有 Herdr 服务或会话。
+- 修改后的浏览器脚本通过，最终减法前后两次完整结果均为 **31 项兼容模式 + 20 项原生检查通过，0 uncaught errors**。之前增补检查时捕获的抽屉响应式残留已修复，原生 `accessibilityState` 未传递到 Web 的选中语义补为显式 ARIA 属性。短视口测量等待可观察布局，截图等待有限动画结束。
+- 新增检查：连接校验失败保留名称 / 地址；草稿存储失败提示并保留输入；历史阅读返回最新；按 agent / pane ID 搜索；搜索无结果和需要处理筛选的恢复入口；横屏抽屉滚动访问；分段选中语义和底板位置；短视口终端边界；减少动态效果。
+- 保留原有 320×568、360×740、390×844、430×932、844×390、768×1024 和 450px visualViewport 检查，以及原生接管、第二台设备防抢占、审批、问题、断网与模糊回执重试验证。默认和原生 UI 均使用测试创建的隔离 Unix socket fixture。
+- 最终静态证据：`artifacts/ui/phone-chat.png`、`phone-draft.png`、`phone-sessions.png`、`phone-search-empty.png`、`phone-history.png`、`phone-connect.png`、`phone-offline.png`、`phone-keyboard-viewport.png`、`desktop-chat.png`、`phone-detail-2x.png`；原生截图位于 `artifacts/native-ui/`。
+- 动效证据：两套 `interaction.webm`、`artifacts/ui/motion-events.json`，以及 `artifacts/ui/motion/` 的对话出场、抽屉与发送的三组采样帧。一轮独立存量润色静态评审后，主 Agent 复看最终截图及动效帧；未对视觉打分。设计取舍和删减文案记录在 `docs/design.md`。
+
+本轮仍是桌面 Chromium 的移动视口验证，**未做真实手机键盘、IME 或系统后台行为测试**。
+
+## 私人内测包（0.2.2-beta.1，2026-10-22）
+
+- `bun run test:release`：Linux x64 上 **19 项打包冒烟检查通过**。解压到临时目录后从包目录以外运行，未安装项目依赖；验证预构建 Web / xterm 资源、鉴权、配对 fragment、自定义路径安装 mherdr、防止覆盖其他命令、原生状态隔离、Codex host 本地协议替身启动和关闭，以及 Pi 扩展在 Node 中导入并注册。
+- 测试只创建自己的临时文件、fixture socket、bridge 与 provider 替身。未安装或更新本机已有 mherdr，未重启或升级用户的 Herdr，未向用户的 agent 提交测试消息。运行包使用明确的入口清单，附 SHA-256、来源 manifest 和第三方许可文件。
+- `bun run typecheck`、`bun test tests`（18 通过、3 跳过、98 次断言）、重建静态资源后的 `bun run test:ui`（31 + 20 项、0 uncaught errors）及 `git diff --check` 通过。未在本轮重跑真实 Herdr / Codex / Pi 集成测试。
+- 产物与按实际压缩包 SHA-256 关联的检查清单位于 `artifacts/releases/`。指南见 `docs/beta-guide.md`，维护者流程见 `docs/releasing.md`。当前仅准备本地私人内测包，未上传、创建公开仓库或发布到 npm；macOS / ARM64 与真实手机仍待验收。

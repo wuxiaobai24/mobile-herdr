@@ -19,15 +19,28 @@ export function NativeSession({ state, control, provider, online, compact, onErr
   const connected = state?.connected;
   const ready = connected && !!state?.conversationId && state.ready !== false;
   const other = state && state.owner !== 'desktop' && !control.owns;
+  const disabled = busy || !online || !connected || (!control.owns && !ready) || !!other || !control.clientId;
+  function controlLabel(): string {
+    if (!state) return '终端兼容模式';
+    if (!connected) return '原生连接中断';
+    if (control.owns) return '你正在手机上继续';
+    return other ? '另一台设备正在控制' : '电脑正在控制';
+  }
+  function controlHint(): string {
+    if (!connected) return '恢复后可继续操作';
+    if (!ready) return '等待电脑完成会话恢复';
+    if (control.owns) return '电脑按 Ctrl+] 接回';
+    return other ? '等待对方交还输入权' : '接管后发送，随时交还';
+  }
   return <>
-    <View style={[styles.row, { gap: 10, paddingHorizontal: 16, paddingVertical: compact ? 4 : 8, borderBottomWidth: 1, borderColor: colors.line, backgroundColor: control.owns ? '#14261f' : colors.sidebar }]}>
-      <Pressable accessibilityRole="button" accessibilityLabel="查看原生连接详情" onPress={() => setDetails(true)} style={[styles.row, { gap: 9, flex: 1, minHeight: 40 }]}>
+    <View style={[styles.row, { gap: 10, paddingHorizontal: 16, paddingVertical: state && !compact ? 8 : 2, borderBottomWidth: 1, borderColor: colors.line, backgroundColor: control.owns ? '#14261f' : colors.sidebar }]}>
+      <Pressable accessibilityRole="button" accessibilityLabel="查看原生连接详情" onPress={() => setDetails(true)} style={[styles.row, { gap: 9, flex: 1, minHeight: 44 }]}>
         {control.owns ? <Smartphone size={17} color={colors.accent} /> : <Monitor size={17} color={colors.muted} />}
-        <View style={{ flex: 1, gap: 3 }}><Text style={{ color: control.owns ? colors.accent : colors.text, fontSize: 13, fontWeight: '600' }}>{state ? !connected ? '原生连接中断' : control.owns ? '你正在手机上继续' : other ? '另一台设备正在控制' : '电脑正在控制' : '启用无缝切换'}</Text>
-          {!compact && <Text numberOfLines={1} style={{ color: colors.muted, fontSize: 12 }}>{state ? control.owns ? '电脑按 Ctrl+] 接回' : '在手机继续当前对话' : '终端与手机，共用同一个 agent'}</Text>}</View><ChevronDown size={13} color={colors.muted} />
+        <View style={{ flex: 1, gap: 3 }}><Text style={{ color: control.owns ? colors.accent : colors.text, fontSize: 13, fontWeight: '600' }}>{controlLabel()}</Text>
+          {state && !compact && <Text numberOfLines={1} style={{ color: colors.muted, fontSize: 12 }}>{controlHint()}</Text>}</View>{!state && <Text style={{ color: colors.accent, fontSize: 13 }}>启用手机接管</Text>}<ChevronDown size={13} color={colors.muted} />
       </Pressable>
-      {state && <Pressable accessibilityRole="button" accessibilityLabel={control.owns ? '交还电脑' : '在手机继续'} disabled={busy || !online || !connected || (!control.owns && !ready) || !!other || !control.clientId} onPress={handoff}
-        style={[styles.row, { gap: 6, minHeight: 44, paddingHorizontal: 12, borderRadius: 8, backgroundColor: control.owns ? colors.hover : colors.accent, opacity: !online || !connected || other ? 0.45 : 1 }]}>
+      {state && <Pressable accessibilityRole="button" accessibilityLabel={control.owns ? '交还电脑' : '在手机继续'} disabled={disabled} onPress={handoff}
+        style={[styles.row, { gap: 6, minHeight: 44, paddingHorizontal: 12, borderRadius: 10, backgroundColor: control.owns ? colors.hover : colors.accent, opacity: disabled ? 0.45 : 1 }]}>
         {busy ? <ActivityIndicator size="small" color={colors.accentInk} /> : <ArrowLeftRight size={15} color={control.owns ? colors.text : colors.accentInk} />}<Text style={{ color: control.owns ? colors.text : colors.accentInk, fontSize: 13, fontWeight: '600' }}>{control.owns ? '交还电脑' : '在手机继续'}</Text>
       </Pressable>}
     </View>
