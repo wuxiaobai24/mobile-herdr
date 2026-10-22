@@ -1,0 +1,41 @@
+import { AppState } from 'react-native';
+import { useEffect, useState } from 'react';
+import { watch } from '../shared/client';
+import type { Conversation, Machine, Snapshot } from '../shared/protocol';
+import type { NativeState } from '../shared/native';
+import { useNetworkOnline } from './useNetworkOnline';
+
+export function useConnection(machine: Machine | undefined, session: string, pane?: string) {
+  const [snapshot, setSnapshot] = useState<Snapshot>();
+  const [chat, setChat] = useState<Conversation>();
+  const [native, setNative] = useState<NativeState | null>();
+  const scope = `${machine?.id}:${machine?.url}:${session}`;
+  const paneScope = `${scope}:${pane}`;
+  const [snapshotScope, setSnapshotScope] = useState('');
+  const [conversationScope, setConversationScope] = useState('');
+  const [status, setStatus] = useState<'live' | 'connecting' | 'offline'>('connecting');
+  const [error, setError] = useState('');
+  const [generation, setGeneration] = useState(0);
+  const networkOnline = useNetworkOnline();
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', state => { if (state === 'active') setGeneration(value => value + 1); });
+    return () => subscription.remove();
+  }, []);
+  useEffect(() => {
+    setSnapshot(undefined); setChat(undefined);
+  }, [machine?.id, session]);
+  useEffect(() => { setChat(undefined); setNative(undefined); }, [machine?.id, session, pane]);
+  useEffect(() => {
+    setError('');
+    if (!machine) return;
+    if (!networkOnline) { setStatus('offline'); setError('设备已离线，草稿会保留。'); return; }
+    return watch(machine, session, pane, state => {
+      if (state.snapshot) { setSnapshot(state.snapshot); setSnapshotScope(scope); }
+      if (state.chat || state.native !== undefined) setConversationScope(paneScope);
+      if (state.chat && (state.native?.connected !== false || state.chat.messages.length)) setChat(state.chat);
+      if (state.native !== undefined) setNative(previous => state.native && !state.native.connected && previous?.runtimeId === state.native.runtimeId ? { ...state.native, messages: previous.messages } : state.native);
+    }, (status, error) => { setStatus(status); setError(error ?? ''); });
+  }, [machine?.id, machine?.url, machine?.token, session, pane, generation, networkOnline]);
+  return { snapshot: snapshotScope === scope ? snapshot : undefined, chat: conversationScope === paneScope ? chat : undefined,
+    native: conversationScope === paneScope ? native : undefined, status, error, reconnect: () => setGeneration(value => value + 1) };
+}

@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "Mobile Herdr", "slug": "mobile-herdr", "version": "0.1.0", "scheme": "mobile-herdr",
+    "orientation": "default", "userInterfaceStyle": "dark",
+    "ios": {
+      "bundleIdentifier": "dev.mobileherdr.app", "supportsTablet": true,
+      "infoPlist": { "NSLocalNetworkUsageDescription": "连接你的开发机上的 Herdr bridge。", "NSAppTransportSecurity": { "NSAllowsArbitraryLoads": true, "NSAllowsArbitraryLoadsInWebContent": true } }
+    },
+    "android": { "package": "dev.mobileherdr.app", "softwareKeyboardLayoutMode": "resize" },
+    "plugins": ["expo-secure-store", "./plugins/with-local-network.cjs"]
+  }
+}
