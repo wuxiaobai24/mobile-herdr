@@ -21,6 +21,23 @@ def snapshot(page, name, **options):
     page.wait_for_function("() => document.getAnimations().filter(a => a.effect.getComputedTiming().iterations !== Infinity).every(a => a.playState !== 'running')")
     page.screenshot(path=str(artifacts / name), **options)
 
+def motion_frames(page, name, selector, restart=False):
+    target = page.locator(selector)
+    count = target.evaluate("""(el, restart) => {
+      if (restart) { el.style.animation = 'none'; void el.offsetHeight; el.style.animation = ''; }
+      void el.offsetHeight;
+      window.sampledAnimations = el.getAnimations({subtree: true});
+      window.sampledAnimations.forEach(a => a.pause());
+      return window.sampledAnimations.length;
+    }""", restart)
+    assert count, (name + ': animation missing', target.evaluate("el => ({tag:el.tagName, role:el.getAttribute('role'), active:el.matches(':active'), disabled:el.getAttribute('aria-disabled'), transform:getComputedStyle(el).transform, transition:getComputedStyle(el).transition, activeTags:[...document.querySelectorAll(':active')].map(el=>el.tagName)})"))
+    folder = artifacts / 'motion' / name
+    folder.mkdir(parents=True, exist_ok=True)
+    for label, fraction in [('start',0),('mid',0.5),('end',1)]:
+        page.evaluate("fraction => window.sampledAnimations.forEach(a => { a.currentTime = a.effect.getTiming().duration * fraction; })", fraction)
+        page.screenshot(path=str(folder / (label + '.png')))
+    page.evaluate("window.sampledAnimations.forEach(a => a.finish()); delete window.sampledAnimations")
+
 with sync_playwright() as p:
     browser = p.chromium.launch(executable_path='/usr/bin/chromium', headless=True, args=['--no-sandbox'])
     context = browser.new_context(viewport={'width': 390, 'height': 844}, device_scale_factor=1, is_mobile=True, has_touch=True,
@@ -46,6 +63,7 @@ with sync_playwright() as p:
     expect(page.get_by_text('已连接原生聊天记录 · pi', exact=True)).to_be_visible()
     expect(page.get_by_text('连接你的开发机', exact=True)).not_to_be_visible()
     page.wait_for_function("() => [...document.querySelectorAll('.markdown')].every(el => el.getAnimations().every(a => a.playState === 'finished'))")
+    motion_frames(page, 'conversation-entry', '[data-testid="conversation-content"]', restart=True)
     snapshot(page, 'phone-chat.png')
     check('connected to the exact original transcript', True)
 
@@ -133,7 +151,21 @@ with sync_playwright() as p:
     page.unroute('**/api/panes/**/prompt?*')
     page.get_by_label('关闭提示', exact=True).click()
     motion_events.append({'name': 'send-feedback', 'seconds': time.monotonic() - video_start})
-    page.get_by_label('发送消息', exact=True).click()
+    send = page.get_by_label('发送消息', exact=True)
+    send.hover()
+    folder = artifacts / 'motion' / 'send-feedback'
+    folder.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(folder/'start.png'))
+    # Sample the production :active CSS using Chromium's pseudo-state override;
+    # actual submission still uses Playwright's normal click below.
+    cdp = context.new_cdp_session(page)
+    cdp.send('DOM.enable'); cdp.send('CSS.enable')
+    document_id = cdp.send('DOM.getDocument')['root']['nodeId']
+    node_id = cdp.send('DOM.querySelector', {'nodeId': document_id, 'selector': '[aria-label="发送消息"]'})['nodeId']
+    cdp.send('CSS.forcePseudoState', {'nodeId': node_id, 'forcedPseudoClasses': ['active']})
+    motion_frames(page, 'send-feedback', '[aria-label="发送消息"]')
+    cdp.send('CSS.forcePseudoState', {'nodeId': node_id, 'forcedPseudoClasses': []})
+    send.click()
     expect(page.get_by_label('发给原会话的消息', exact=True)).to_have_value('')
     expect(page.get_by_text(draft, exact=True)).to_be_visible()
     check('successful send appears in the original transcript', True)
@@ -188,6 +220,7 @@ with sync_playwright() as p:
     page.set_viewport_size({'width': 390, 'height': 844})
     page.get_by_role('tab', name='终端', exact=True).click()
     expect(page.get_by_role('tab', name='终端', exact=True)).to_have_attribute('aria-selected', 'true')
+    motion_frames(page, 'mode-switch', '[data-testid="mode-tabs"]')
     page.wait_for_function("() => new DOMMatrixReadOnly(getComputedStyle(document.querySelector('[data-testid=\"mode-tabs\"]'), '::before').transform).m41 > 70")
     check('view selector exposes its active tab and moves its selection indicator', True)
     frame = page.frame_locator('iframe[title="原始 Herdr 终端"]')

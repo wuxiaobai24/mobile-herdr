@@ -3,10 +3,11 @@ import { ActivityIndicator, Pressable, ScrollView, Text, View, useWindowDimensio
 import { ChevronDown, ChevronRight, Code2, Link2, MessageSquare, TerminalSquare } from 'lucide-react-native';
 import type { ChatMessage, Conversation as ConversationData, Machine, Pane } from '../../shared/protocol';
 import { api, panePath } from '../../shared/client';
-import { colors, mono, styles } from '../theme';
+import { useTheme, mono } from '../theme';
 import MessageBody from './MessageBody';
 
 function ToolGroup({ messages }: { messages: ChatMessage[] }): React.JSX.Element {
+  const { colors, styles } = useTheme();
   const [expanded, setExpanded] = useState(false);
   return <View style={{ marginVertical: 6 }}><Pressable accessibilityRole="button" accessibilityState={{ expanded }} aria-expanded={expanded} onPress={() => setExpanded(!expanded)} style={[styles.row, { gap: 9, minHeight: 44, paddingVertical: 10 }]}>
     {expanded ? <ChevronDown size={16} color={colors.muted} /> : <ChevronRight size={16} color={colors.muted} />}<Code2 size={16} color={colors.dim} /><Text style={styles.muted}>{messages.length} 项工具操作</Text><Text numberOfLines={1} style={[styles.muted, { flex: 1, fontFamily: mono }]}>{[...new Set(messages.map(message => message.toolName))].join(' · ')}</Text>
@@ -23,6 +24,7 @@ function groups(messages: ChatMessage[]): ChatMessage[][] {
 }
 interface Props { chat?: ConversationData; machine: Machine; session: string; pane: Pane; online: boolean; native?: boolean; footer?: React.ReactNode; onTerminal: () => void; onBound: () => void; onError: (message: string) => void }
 export function Conversation({ chat, machine, session, pane, online, native, footer, onTerminal, onBound, onError }: Props): React.JSX.Element {
+  const { colors, styles, appearance } = useTheme();
   const { width } = useWindowDimensions();
   const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
   const nearBottom = useRef(true);
@@ -57,7 +59,7 @@ export function Conversation({ chat, machine, session, pane, online, native, foo
       {(!native || chat.truncated) && <View style={[styles.row, { justifyContent: 'center', gap: 7, marginBottom: 24 }]}><Link2 size={12} color={colors.dim} /><Text style={[styles.muted, { fontSize: 12 }]}>{chat.truncated ? '显示最近的对话' : '已连接原生聊天记录'} · {chat.source}</Text></View>}
       {chat.messages.length === 0 && <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 28, gap: 12 }}><MessageSquare size={28} color={colors.accent} /><Text style={{ color: colors.text, fontSize: 20, fontWeight: '600' }}>接着电脑上的任务</Text></View>}
       {groups(chat.messages).map(group => group[0].role === 'tool' ? <ToolGroup key={group[0].id} messages={group} /> : <View key={group[0].id} style={{ marginVertical: 14, alignItems: group[0].role === 'user' ? 'flex-end' : 'stretch' }}>
-        {group[0].role === 'user' ? <View style={{ backgroundColor: colors.hover, borderRadius: 16, padding: 14, maxWidth: '94%' }}><Text selectable style={[styles.text, { fontSize: 16, lineHeight: 26 }]}>{group[0].text}</Text></View> : <View style={{ gap: 12 }}><Text style={{ fontSize: 13, color: colors.accent, fontWeight: '600' }}>{pane.agent === 'codex' ? 'Codex' : pane.agent === 'claude' ? 'Claude Code' : pane.agent === 'pi' ? 'Pi' : pane.agent}</Text><MessageBody text={group[0].text} /></View>}
+        {group[0].role === 'user' ? <View style={{ backgroundColor: colors.hover, borderRadius: 18, borderTopRightRadius: 5, paddingHorizontal: 16, paddingVertical: 13, maxWidth: '92%' }}><Text selectable style={[styles.text, { fontSize: appearance.readingSize, lineHeight: Math.round(appearance.readingSize * 1.65) }]}>{group[0].text}</Text></View> : <View style={{ gap: 12 }}><Text style={{ fontSize: 13, color: colors.muted, fontWeight: '600' }}>{pane.agent === 'codex' ? 'Codex' : pane.agent === 'claude' ? 'Claude Code' : pane.agent === 'pi' ? 'Pi' : pane.agent}</Text><MessageBody text={group[0].text} /></View>}
       </View>)}
       {pane.agent_status === 'working' && <View style={[styles.row, { gap: 10, paddingTop: 18 }]}><ActivityIndicator size="small" color={colors.accent} /><Text style={styles.muted}>Agent 正在工作…</Text></View>}
     </>}

@@ -41,7 +41,7 @@ test.skipIf(process.env.MOBILE_HERDR_LIVE !== '1')('real Herdr: same pane PTY su
     ws.send(JSON.stringify({ type: 'input', data: "printf 'MOBILE_%s\\n' 'HERDR_ROUNDTRIP'\r" }));
     let screen = '';
     for (let i = 0; i < 100; i++) {
-      const result = await api<any>(machine, panePath('default', pane.pane_id, 'screen'));
+      const result = await api<any>(machine, panePath('default', pane.pane_id, 'screen') + '&lines=2000');
       screen = result.read.text;
       if (screen.includes('MOBILE_HERDR_ROUNDTRIP')) break;
       await Bun.sleep(50);

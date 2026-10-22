@@ -35,6 +35,7 @@ export async function createFixture() {
   };
   const calls: { method: string; params: any }[] = [];
   let foregroundPid = 100;
+  let screen = '原始终端输出';
   const sockets = new Set<Socket>();
   const socketPath = join(directory, 'herdr.sock');
   const api = createServer(socket => {
@@ -51,7 +52,7 @@ export async function createFixture() {
       const pane = snapshot.panes.find(pane => pane.pane_id === (params.pane_id ?? params.target));
       if (method === 'session.snapshot') result = { type: 'session_snapshot', snapshot };
       else if (method === 'pane.process_info') result = { process_info: { foreground_processes: [{ pid: foregroundPid }] } };
-      else if (method === 'pane.read') result = { type: 'pane_read', read: { text: '原始终端输出', revision: 1, truncated: false } };
+      else if (method === 'pane.read') result = { type: 'pane_read', read: { text: screen, revision: 1, truncated: false } };
       else if (method === 'agent.prompt') {
         if (pane?.agent_status === 'blocked') error = { code: 'agent_blocked', message: 'Agent is waiting for an approval.' };
         else {
@@ -68,6 +69,7 @@ export async function createFixture() {
   const bridge = createBridge(config);
   return {
     config, snapshot, calls, directory, transcript, bridge, url: `http://127.0.0.1:${bridge.port}`,
+    setScreen(text: string) { screen = text; },
     setForegroundPid(pid: number) { foregroundPid = pid; },
     async close() { bridge.stop(true); for (const socket of sockets) socket.destroy(); api.close(); await rm(directory, { recursive: true, force: true }); },
   };

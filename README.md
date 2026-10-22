@@ -4,9 +4,11 @@
 
 移动 Web 支持 Codex / Pi 原生 Chat 与电脑终端之间交接控制权，以及原始终端、多开发机、草稿恢复和断网重连。保留 Expo 代码结构供以后做原生端，**本次不交付原生安装包**。
 
+顶栏“外观”支持 Catppuccin 四款与 Flexoki 深浅主题，可调整阅读字体、阅读字号和终端字号。终端支持手势翻阅、只读历史与回到实时。
+
 ## 朋友内测
 
-当前准备版本为 **0.2.2-beta.2**。可以分发预构建运行包，接收方安装 Bun / Herdr 后解压启动，无需安装前端依赖或构建页面。首批仅 Linux x64 完成打包验证，其他平台与真实手机行为仍需验收。
+当前准备版本为 **0.2.2-beta.3**。可以分发预构建运行包，接收方安装 Bun / Herdr 后解压启动，无需安装前端依赖或构建页面。首批仅 Linux x64 完成打包验证，其他平台与真实手机行为仍需验收。
 
 - 使用者：[安装、配对、升级与回退](docs/beta-guide.md)
 - 维护者：[打包验证与发布步骤](docs/releasing.md)
@@ -97,7 +99,7 @@ Codex 普通命令 / 文件审批和结构化问题可以在 Chat 中处理；�
 
 ## 多台 remote machine
 
-从 0.2.2-beta.2 起，bridge 会读取同一账号的 `herdr machine list --json`，自动发现并连接启用的 SSH machines，在“开发机”中显示连接、离线、认证和禁用状态。手机只需配对入口 bridge，不必逐台填写远端地址和密钥。新增连接不会切走当前机器，刷新后恢复上次选择。
+从 0.2.2-beta.3 起，bridge 会读取同一账号的 `herdr machine list --json`，自动发现并连接启用的 SSH machines，在“开发机”中显示连接、离线、认证和禁用状态。手机只需配对入口 bridge，不必逐台填写远端地址和密钥。新增连接不会切走当前机器，刷新后恢复上次选择。
 
 SSH 使用入口开发机上的 OpenSSH 配置、密钥和 agent；不会把 SSH 凭证发到浏览器。远端需要 **Bun 1.4+**、正在运行且支持 protocol 22 的 Herdr，以及可从 SSH 命令找到的 Herdr CLI。连接会通过 SSH stdin 传入临时 bridge 程序，用私有 Unix socket 转发；不安装远端包、不启动或替换 Herdr、不恢复第二份 agent。SSH 断开后临时 bridge 最迟约 40 秒清理，原生 agent 和 Herdr session 继续运行。
 

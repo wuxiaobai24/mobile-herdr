@@ -3,10 +3,11 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, View 
 import { ArrowLeftRight, ChevronDown, Monitor, Smartphone, X } from 'lucide-react-native';
 import type { NativeState } from '../../shared/native';
 import type { NativeControl } from '../useNativeControl';
-import { colors, mono, styles } from '../theme';
+import { useTheme, mono } from '../theme';
 
 interface Props { state?: NativeState | null; control: NativeControl; provider?: string; online: boolean; compact?: boolean; onError: (text: string) => void }
 export function NativeSession({ state, control, provider, online, compact, onError }: Props): React.JSX.Element | null {
+  const { colors, styles } = useTheme();
   const [details, setDetails] = useState(false);
   const [busy, setBusy] = useState(false);
   async function handoff(): Promise<void> {
@@ -33,7 +34,7 @@ export function NativeSession({ state, control, provider, online, compact, onErr
     return other ? '等待对方交还输入权' : '接管后发送，随时交还';
   }
   return <>
-    <View style={[styles.row, { gap: 10, paddingHorizontal: 16, paddingVertical: state && !compact ? 8 : 2, borderBottomWidth: 1, borderColor: colors.line, backgroundColor: control.owns ? '#14261f' : colors.sidebar }]}>
+    <View style={[styles.row, { gap: 10, paddingHorizontal: 16, paddingVertical: state && !compact ? 8 : 2, borderBottomWidth: 1, borderColor: colors.line, backgroundColor: control.owns ? colors.accentSurface : colors.sidebar }]}>
       <Pressable accessibilityRole="button" accessibilityLabel="查看原生连接详情" onPress={() => setDetails(true)} style={[styles.row, { gap: 9, flex: 1, minHeight: 44 }]}>
         {control.owns ? <Smartphone size={17} color={colors.accent} /> : <Monitor size={17} color={colors.muted} />}
         <View style={{ flex: 1, gap: 3 }}><Text style={{ color: control.owns ? colors.accent : colors.text, fontSize: 13, fontWeight: '600' }}>{controlLabel()}</Text>
@@ -44,7 +45,7 @@ export function NativeSession({ state, control, provider, online, compact, onErr
         {busy ? <ActivityIndicator size="small" color={colors.accentInk} /> : <ArrowLeftRight size={15} color={control.owns ? colors.text : colors.accentInk} />}<Text style={{ color: control.owns ? colors.text : colors.accentInk, fontSize: 13, fontWeight: '600' }}>{control.owns ? '交还电脑' : '在手机继续'}</Text>
       </Pressable>}
     </View>
-    <Modal visible={details} transparent animationType="slide" onRequestClose={() => setDetails(false)}><View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: '#070b0bdc' }}><View style={{ maxHeight: '80%', backgroundColor: colors.sidebar, padding: 22, borderTopLeftRadius: 18, borderTopRightRadius: 18, gap: 18, borderWidth: 1, borderColor: colors.line }}>
+    <Modal visible={details} transparent animationType="slide" onRequestClose={() => setDetails(false)}><View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: colors.overlay }}><View style={{ maxHeight: '80%', backgroundColor: colors.sidebar, padding: 22, borderTopLeftRadius: 18, borderTopRightRadius: 18, gap: 18, borderWidth: 1, borderColor: colors.line }}>
       <View style={[styles.row, { justifyContent: 'space-between' }]}><Text style={{ color: colors.text, fontSize: 20, fontWeight: '600' }}>电脑与手机，接着做</Text><Pressable onPress={() => setDetails(false)} accessibilityLabel="关闭原生连接详情" style={{ padding: 10 }}><X size={20} color={colors.muted} /></Pressable></View>
       <ScrollView contentContainerStyle={{ gap: 16, paddingBottom: 20 }}>
         {state ? <>
@@ -66,13 +67,14 @@ export function NativeSession({ state, control, provider, online, compact, onErr
   </>;
 }
 function ModelOption({ state, control, onError }: { state: NativeState; control: NativeControl; onError: (text: string) => void }): React.JSX.Element {
+  const { colors, styles } = useTheme();
   const [model, setModel] = useState(state.model ?? '');
   const [busy, setBusy] = useState(false);
   async function save(): Promise<void> {
     setBusy(true); try { await control.act('model', { model }); } catch (error) { onError(error instanceof Error ? error.message : '切换失败。'); } finally { setBusy(false); }
   }
   const choices = state.models?.filter(row => !model || row.id.toLowerCase().includes(model.toLowerCase()) || row.name.toLowerCase().includes(model.toLowerCase())) ?? [];
-  return <View style={{ gap: 8 }}><Text style={styles.text}>{state.provider === 'codex' ? '下次手机任务使用的模型' : '当前会话模型'}</Text><TextInput accessibilityLabel="原生模型 ID" value={model} onChangeText={setModel} autoCapitalize="none" style={[styles.field, { fontSize: 16 }]} placeholder="搜索可用模型" placeholderTextColor={colors.dim} />
+  return <View style={{ gap: 8 }}><Text style={styles.text}>{state.provider === 'codex' ? '下次手机任务使用的模型' : '当前会话模型'}</Text><TextInput accessibilityLabel="原生模型 ID" value={model} onChangeText={setModel} autoCapitalize="none" style={[styles.field, { fontSize: 16 }]} placeholder="搜索可用模型" placeholderTextColor={colors.muted} />
     {choices.slice(0, 12).map(row => <Pressable key={row.id} accessibilityRole="button" accessibilityLabel={`选择模型 ${row.name}`} onPress={() => setModel(row.id)} style={{ paddingVertical: 10, borderBottomWidth: 1, borderColor: colors.line }}><Text style={{ color: model === row.id ? colors.accent : colors.text, fontSize: 14 }}>{row.name}</Text><Text style={styles.muted}>{row.id}</Text></Pressable>)}
     <Pressable accessibilityRole="button" disabled={busy || state.status !== 'idle'} onPress={save} style={[styles.button, styles.secondary]}><Text style={styles.text}>{busy ? '正在切换…' : '应用模型'}</Text></Pressable></View>;
 }

@@ -6,10 +6,11 @@ import type { NativeState } from '../../shared/native';
 import type { NativeControl } from '../useNativeControl';
 import { ApiError, api, machineScope, panePath, requestId } from '../../shared/client';
 import { loadDraft, saveDraft } from '../storage';
-import { colors, styles } from '../theme';
+import { useTheme } from '../theme';
 
 interface Props { machine: Machine; session: string; pane: Pane; online: boolean; compact?: boolean; native?: NativeState | null; control?: NativeControl; onError: (message: string) => void; onSent: () => void; onTerminal: () => void }
 export function Composer({ machine, session, pane, online, compact = false, native, control, onError, onSent, onTerminal }: Props): React.JSX.Element {
+  const { colors, styles } = useTheme();
   const key = `${machineScope(machine)}:${session}:${pane.pane_id}${native ? `:${native.runtimeId}:${native.conversationId ?? 'starting'}` : ''}`;
   const { width } = useWindowDimensions();
   const [text, setText] = useState('');
@@ -84,7 +85,7 @@ export function Composer({ machine, session, pane, online, compact = false, nati
   return <View style={{ paddingTop: compact ? 6 : 10, paddingHorizontal: compact ? 12 : 16, paddingBottom: compact ? 6 : 12, backgroundColor: colors.bg }}>
     <View testID="composer" style={{ borderWidth: 1, borderColor: colors.line, borderRadius: 16, backgroundColor: colors.surface }}>
       <TextInput accessibilityLabel="发给原会话的消息" multiline value={text} onChangeText={edit} editable={ready} maxLength={32000}
-        placeholder={blocked ? '先完成 agent 当前的确认，草稿会保留…' : native && !control?.owns ? '接管后即可发送，草稿可以先写…' : native && working ? '补充到当前任务…' : '继续交给 agent…'} placeholderTextColor={colors.dim}
+        placeholder={blocked ? '先完成 agent 当前的确认，草稿会保留…' : native && !control?.owns ? '接管后即可发送，草稿可以先写…' : native && working ? '补充到当前任务…' : '继续交给 agent…'} placeholderTextColor={colors.muted}
         style={{ color: colors.text, fontSize: 16, lineHeight: 25, padding: compact ? 12 : 16, paddingBottom: 8, minHeight: compact ? 48 : 68, maxHeight: compact ? 110 : 160, textAlignVertical: 'top' }}
         onKeyPress={event => {
           const native = event.nativeEvent as typeof event.nativeEvent & { ctrlKey?: boolean; metaKey?: boolean; isComposing?: boolean };

@@ -43,6 +43,7 @@ try {
     !/(^|\/)(\.git|\.env[^/]*|token|artifacts)(\/|$)|\.jsonl$|\.sock$/.test(path) && !path.startsWith('node_modules/')));
   check('runtime needs no dependency installation', !JSON.parse(await readFile(join(installation, 'package.json'), 'utf8')).dependencies);
   check('third-party notices accompany bundled dependencies', entries.some(path => path.startsWith('licenses/react/')) && entries.some(path => path.startsWith('licenses/qrcode-terminal/')));
+  check('theme attribution and MIT licenses accompany the runtime', entries.includes('licenses/themes/catppuccin.txt') && entries.includes('licenses/themes/flexoki.txt') && (await readFile(join(installation, 'THEME_CREDITS.md'), 'utf8')).includes('licenses/themes/'));
   const manifest = JSON.parse(await readFile(join(installation, 'release.json'), 'utf8'));
   check('manifest identifies the beta version and source snapshot', manifest.version === version && manifest.channel === 'private-beta' && typeof manifest.sourceDirty === 'boolean');
   const env: NodeJS.ProcessEnv = { ...process.env, MOBILE_HERDR_BUN: process.execPath, MOBILE_HERDR_STATE: join(directory, 'bridge-state'),

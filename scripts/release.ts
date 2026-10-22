@@ -92,6 +92,10 @@ export async function createRelease(outputDirectory = join(root, 'artifacts/rele
     } }, null, 2) + '\n');
     await writeFile(join(destination, 'bin/mobile-herdr'), launcher(), { mode: 0o755 });
     await dependencyNotices(destination);
+    await cp(join(root, 'docs/theme-licenses'), join(destination, 'licenses/themes'), { recursive: true });
+    await writeFile(join(destination, 'THEME_CREDITS.md'), (await readFile(join(root, 'docs/theme-credits.md'), 'utf8')).replaceAll('theme-licenses/', 'licenses/themes/'));
+    const notices = join(destination, 'THIRD_PARTY_NOTICES.md');
+    await writeFile(notices, await readFile(notices, 'utf8') + '\n## Color themes\n\nCatppuccin and Flexoki are MIT licensed. See THEME_CREDITS.md and licenses/themes/.\n');
     await writeFile(join(destination, 'release.json'), JSON.stringify({ version, channel: 'private-beta', builtAt: new Date().toISOString(), buildBun: Bun.version,
       sourceCommit: await command(['git', 'rev-parse', 'HEAD']), sourceDirty: !!await command(['git', 'status', '--porcelain']),
       requirements: { bun: '>=1.4.0', herdr: '0.9.3 / protocol 22', platform: 'Linux or macOS; verify on each target before recommending it' },

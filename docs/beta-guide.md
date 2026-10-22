@@ -15,11 +15,11 @@
 从邀请人获取同一版本的 `.tar.gz` 与 `.tar.gz.sha256`，放在同一目录：
 
 ```bash
-sha256sum -c mobile-herdr-0.2.2-beta.2.tar.gz.sha256
-# macOS 上校验可用：shasum -a 256 -c mobile-herdr-0.2.2-beta.2.tar.gz.sha256
+sha256sum -c mobile-herdr-0.2.2-beta.3.tar.gz.sha256
+# macOS 上校验可用：shasum -a 256 -c mobile-herdr-0.2.2-beta.3.tar.gz.sha256
 
-tar -xzf mobile-herdr-0.2.2-beta.2.tar.gz
-cd mobile-herdr-0.2.2-beta.2
+tar -xzf mobile-herdr-0.2.2-beta.3.tar.gz
+cd mobile-herdr-0.2.2-beta.3
 ./bin/mobile-herdr --version
 ```
 
@@ -99,6 +99,12 @@ mherdr pi --session <完整会话-ID或路径>
 ```
 
 Codex 暂不支持 `--profile` / `--worktree`、最近会话选择器；可使用受支持的 `-c` 配置。特殊审批或 Pi 自定义终端组件仍需要电脑原界面。刷新、断网和关闭手机页面不会停止 agent；草稿保留，恢复后不会自动重发消息。
+
+### 外观和终端浏览
+
+顶栏点“外观”可切换 Catppuccin 四款 / Flexoki 深浅两款主题，调整阅读字体、阅读字号（14–20px）与终端字号（11–17px）。设置保存在当前设备，刷新可恢复，不需要重新连接会话。
+
+终端中向下拖动或向上滚轮可翻阅较早输出；也可直接点“历史”，查看 Herdr 保留的最近 2000 行并选择复制。历史不会自动刷新，点“刷新”保留阅读位置，点“返回终端”继续实时操作。普通终端有本地回滚时使用“回到实时”。浏览手势不向原程序发送按键；需要输入时点“键盘”或使用快捷键。全屏程序反复覆盖的画面不一定会保存在 Herdr 历史中。
 
 ## 5. 日常停止、升级与回退
 

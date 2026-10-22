@@ -1,4 +1,4 @@
-Mobile Herdr 0.2.2-beta.2 想邀请你帮忙试用：在手机浏览器里继续自己开发机上的 Herdr agent，支持 Codex / Pi 与电脑终端来回交接。
+Mobile Herdr 0.2.2-beta.3 想邀请你帮忙试用：在手机浏览器里继续自己开发机上的 Herdr agent，支持 Codex / Pi 与电脑终端来回交接。
 
 这次是私人内测，首批先验证 Linux x64；需要 Bun 1.4+、Herdr 0.9.3 / protocol 22，使用原生交接还需要已安装并登录的 Codex 或 Pi。手机不用装 App。
 

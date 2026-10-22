@@ -140,7 +140,9 @@ export function createBridge(config: BridgeConfig, options: { remotes?: RemoteGa
           if (request.method === 'GET' && action === 'native') return response(request, await nativeState(socket, pane) ?? null);
           if (request.method === 'GET' && action === 'chat') { const native = await nativeState(socket, pane); return response(request, native ? nativeChat(native) : await transcripts.read(socket, pane)); }
           if (request.method === 'GET' && action === 'screen') {
-            const result = await rpc<{ read: unknown }>(socket, 'pane.read', { pane_id: id, source: 'recent_unwrapped', lines: 200, strip_ansi: true });
+            const lines = Number(url.searchParams.get('lines') ?? 200);
+            if (!Number.isInteger(lines) || lines < 1 || lines > 5000) throw new BridgeError('invalid_lines', '历史行数须为 1–5000。', 400);
+            const result = await rpc<{ read: unknown }>(socket, 'pane.read', { pane_id: id, source: 'recent_unwrapped', lines, strip_ansi: true });
             return response(request, result);
           }
           if (request.method !== 'POST') throw new BridgeError('method_not_allowed', '请求方法无效。', 405);

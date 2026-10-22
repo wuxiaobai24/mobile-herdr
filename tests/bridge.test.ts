@@ -20,6 +20,14 @@ describe('bridge over a real Unix socket', () => {
     expect(snapshot.panes[0].pane_id).toBe('w1:p1');
     expect((await fetch(fixture.url + '/api/snapshot?session=../../other', { headers: { Authorization: 'Bearer ' + machine.token } })).status).toBe(404);
   });
+  test('terminal history is read-only, scoped and bounded', async () => {
+    const path = panePath('default', 'w1:p1', 'screen');
+    await api(machine, path + '&lines=2000');
+    expect(fixture.calls.at(-1)).toMatchObject({ method: 'pane.read', params: { pane_id: 'w1:p1', source: 'recent_unwrapped', lines: 2000, strip_ansi: true } });
+    for (const lines of ['0', '5001', '1.5', 'no']) {
+      await expect(api(machine, path + '&lines=' + lines)).rejects.toMatchObject({ code: 'invalid_lines', status: 400 });
+    }
+  });
   test('loads the exact reported transcript and follows append-only updates', async () => {
     const path = panePath('default', 'w1:p1', 'chat');
     const first = await api<Conversation>(machine, path);

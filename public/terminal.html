@@ -1,3 +1,30 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Herdr Terminal</title><link rel="stylesheet" href="/terminal.css"><style>
-html,body{height:100%;margin:0;background:#101415;color:#a6b4af;font:13px system-ui}body{display:flex;flex-direction:column}#state{padding:10px 14px;border-bottom:1px solid #2a3434;min-height:18px}#terminal{flex:1;min-height:0;padding:8px}#keys{display:flex;gap:7px;padding:9px;border-top:1px solid #2a3434;overflow:auto}button{border:1px solid #34413d;color:#edf2ef;background:#1b2223;border-radius:6px;padding:10px 13px;white-space:nowrap;cursor:pointer;touch-action:manipulation}button:active{background:#34413d}button:disabled{opacity:.4}.xterm{height:100%}
-</style></head><body><div id="state">连接原始终端…</div><div id="terminal"></div><div id="keys"><button data-key="\u001b">Esc</button><button data-key="\u0003">Ctrl C</button><button data-key="\u001b[A">↑</button><button data-key="\u001b[B">↓</button><button data-key="\u0009">Tab</button><button data-key="\u000d">Enter</button><button id="reconnect">重连</button></div><script type="module" src="/terminal.js"></script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Herdr Terminal</title><link rel="stylesheet" href="/terminal.css">
+<style>
+:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg, #1e1e2e);color:var(--text, #cdd6f4)}
+*{box-sizing:border-box}html,body{height:100%;margin:0;overflow:hidden}body{display:flex;flex-direction:column;font-size:13px}
+button{font:inherit;border:1px solid var(--line, #585b70);color:var(--muted, #bac2de);background:var(--surface, #313244);border-radius:8px;min-height:44px;padding:0 12px;white-space:nowrap;cursor:pointer;touch-action:manipulation;transition:background .14s,transform .14s}
+button:hover{background:var(--hover, #45475a)}button:active{transform:scale(.97)}button:focus-visible{outline:2px solid var(--accent, #89b4fa);outline-offset:-2px}button:disabled{opacity:.4;cursor:default}button[aria-pressed=true]{background:var(--hover, #45475a);color:var(--text, #cdd6f4);border-color:var(--line, #585b70)}
+#toolbar{display:flex;align-items:center;gap:6px;padding:4px 10px;border-bottom:1px solid var(--line, #585b70);flex-shrink:0}#state{flex:1;min-width:0;font-size:12px;line-height:18px;color:var(--muted, #bac2de)}#toolbar button{border:0;background:transparent;padding:0 10px}#toolbar button[aria-pressed=true]{background:var(--hover, #45475a)}
+#surface{position:relative;flex:1;min-height:0;overflow:hidden}#terminal{height:100%;padding:10px 6px 10px 12px;touch-action:none}.xterm{height:100%}.xterm .xterm-scrollable-element>.scrollbar>.slider{background:var(--line, #585b70)!important}
+#history{height:100%;display:flex;flex-direction:column;background:var(--bg, #1e1e2e)}#history-tools{display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--line, #585b70);color:var(--muted, #bac2de);flex-shrink:0}#history-note{flex:1;line-height:18px;font-size:12px}#history-tools button{border:0;background:transparent;color:var(--accent, #89b4fa)}
+#history-content{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;touch-action:pan-x pan-y;white-space:pre;margin:0;padding:14px 16px;font:var(--terminal-size, 13px)/1.7 "SFMono-Regular",Consolas,"Liberation Mono",monospace;tab-size:4;user-select:text;-webkit-user-select:text}
+#latest{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);background:var(--hover, #45475a);box-shadow:0 3px 16px #0006;color:var(--text, #cdd6f4);border-radius:24px}#latest:active{transform:translateX(-50%) scale(.97)}
+#keys{display:flex;gap:6px;padding:8px 10px;border-top:1px solid var(--line, #585b70);overflow-x:auto;flex-shrink:0;scrollbar-width:thin;background:var(--sidebar, #181825)}#keys button{min-width:44px}#keys #reconnect{margin-left:auto}
+[hidden]{display:none!important}::selection{background:color-mix(in srgb, var(--accent) 35%, transparent)}::-webkit-scrollbar{width:7px;height:6px}::-webkit-scrollbar-thumb{background:var(--line, #585b70);border-radius:4px}
+@media(max-height:350px){#toolbar{padding-block:0}#keys{padding-block:4px}#terminal{padding-block:4px}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style></head>
+<body>
+<div id="toolbar"><span id="state" role="status">连接原始终端…</span><button id="show-history" aria-pressed="false">历史</button><button id="keyboard" aria-label="打开终端键盘">键盘</button></div>
+<div id="surface">
+<div id="terminal" aria-label="实时终端"></div>
+<section id="history" aria-label="终端历史" hidden><div id="history-tools"><span id="history-note" role="status">读取历史…</span><button id="refresh-history">刷新</button><button id="close-history">返回终端</button></div><pre id="history-content" tabindex="0" aria-label="终端历史内容"></pre></section>
+<button id="latest" hidden>回到实时</button>
+</div>
+<div id="keys"><button data-key="\u001b">Esc</button><button data-key="\u0003">Ctrl C</button><button data-key="\u001b[A">↑</button><button data-key="\u001b[B">↓</button><button data-key="\u0009">Tab</button><button data-key="\u000d">Enter</button><button id="reconnect">重连</button></div>
+<script type="module" src="/terminal.js"></script>
+</body></html>

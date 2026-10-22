@@ -101,3 +101,15 @@ Oil UI 版本检查记录：使用 0.18.1，提示可更新至 0.23.9，本任�
 - `bun run test:release`：**20 项通过**，含预构建 SSH worker 随包分发；该测试关闭真实 machine 发现，避免连接运行测试者的主机。`bun run test:ui` 在重建静态资源后 **31 + 20 + 14 = 65 项通过，0 uncaught errors**。
 - 新增浏览器检查覆盖自动显示 online / auth / disabled profiles、初始连接失败后的元信息重试和错误清除、刷新恢复远程选择、同名 pane 草稿隔离、原生接管 / 交还、离线不重放、待认证目标不保留本地可写 pane，以及 320px、390px、横屏和 450px visualViewport。证据为 `artifacts/ssh-ui/`。
 - 仍未在用户另一台电脑的实际 SSH profiles、macOS / ARM64 或真实手机上验收；远端需 Bun 1.4+、可发现的 Herdr CLI、运行中的 protocol 22 session 与可用的 Unix socket 转发。失败明确提示，不自动处理认证或部署依赖。停用 SSH 转发不会停止原生 agent；临时 bridge 无活动约 35–40 秒退出。
+
+## 多主题、可调字体与终端浏览（0.2.2-beta.3）
+
+- `bun run typecheck` 与 `git diff --check` 通过。
+- `MOBILE_HERDR_LIVE=1 bun test tests`：23 pass、3 skip、0 fail，172 assertions。包含独立 Herdr session 的原 pane PTY / 历史读取与断开生存验证；3 个未启用项为真实 Codex、Pi 与 OpenSSH 测试，不将它们描述为本轮已验收。新增六主题正文、输入提示与主操作对比度检查（42 assertions）。
+- 重建静态资源后，由主 Agent 连续执行 `bun run test:ui` 三次：每次 legacy 31 + native 20 + SSH 14 + appearance/terminal 25 = **90 checks**，三次均通过、零未捕获浏览器错误。覆盖设置刷新读回、设置存储失败、草稿保持、六主题切换、阅读与终端独立字号、等宽字体、320px / 450px / 横屏、历史纵向与横向滚动、刷新位置保持、普通回滚与新输出不抢位置、回到实时、外观切换不重连终端。
+- 备用屏幕的滚轮与 Chromium CDP 触控拖动均未产生 input frame。终端浏览脚本使用自有 Unix-socket fixture 和模拟 VT WebSocket 流；后端真实 PTY 由上述独立 Herdr session 另验，不将模拟流描述为用户 agent 的真实输出。
+- 根因复现：在测试创建并清理的 Herdr session 中，仅 attach 初始化即观察到 alternate-screen 与 mouse-tracking 控制序列。备用屏幕没有普通 xterm scrollback，旧路径无法提供安全的浏览体验。新路径使用只读 `pane.read` 的 `recent_unwrapped`，默认保留原接口 200 行，可请求 1–5000 行，UI 请求 2000 行；历史保留范围由 Herdr 和原程序决定。
+- 证据：`artifacts/appearance-ui/verification.json`、`interaction.webm`、六主题设置 / 阅读 / 终端截图；`desktop-flexoki-chat.png` 为 1280×900，其余主图为 390×844。真实设备键盘、IME、后台恢复仍需独立验收。
+- 动效证据：`artifacts/ui/motion/conversation-entry/`、`mode-switch/`、`send-feedback/` 的 start / mid / end 帧。内容淡入为生产 CSS 的重新触发采样；分段切换采样真实 CSS transition；按压使用 Chromium 强制 `:active` 状态采样生产 CSS，发送动作另走真实 click，不能据此宣称物理触屏手感通过。外观面板淡入在 `artifacts/appearance-ui/interaction.webm`；其中的主动页面刷新有意验证设置持久化。
+- 完成一轮独立存量界面润色评审，不打分。未发现静态阻断；采纳“长按复制”改为“选择复制”，补齐关键 CSS 动效证据。保留字体预览句和主题深浅说明作为调节依据。报告见 `docs/ui-theme-review.md`。
+- `bun run test:release`：21 checks 通过（Linux x64），包含新主题的许可与来源随包分发。源码与运行包为 beta.3；未重启用户现有 Herdr 服务，也未终止任何原生 agent。
