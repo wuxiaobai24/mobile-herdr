@@ -1,6 +1,20 @@
-# Mobile Herdr 私人内测指南
+# Mobile Herdr Beta 使用指南
 
-用手机浏览器继续自己开发机上的 Herdr 会话。这个包已包含 Web 页面、bridge、Codex broker 和 Pi 扩展，无需 `bun install` 或构建前端。每位使用者在自己的开发机部署一份；手机只需浏览器。
+用手机浏览器继续自己开发机上的 Herdr 会话。这个包已包含 Web 页面、bridge、Codex broker 和 Pi 扩展，无需 `bun install` 或构建前端。每位使用者在自己的开发机部署一份；手机只需浏览器。源码与下载包见 [GitHub](https://github.com/wuxiaobai24/mobile-herdr)。
+
+## 一键安装（推荐）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wuxiaobai24/mobile-herdr/master/install.sh | bash
+```
+
+脚本从 GitHub 下载固定测试版本 beta.5 并校验 SHA-256，默认把版本放在 `~/.local/share/mobile-herdr/versions`，命令放在 `~/.local/bin`。安装不需要 sudo；缺少 Bun 时从 bun.sh 官方入口安装 Bun 1.4.0 到 `~/.local/share/mobile-herdr/bun`，不升级系统已有 Bun、不修改 shell 配置。已有 Bun 过旧会提示使用者自行处理。自动安装 Bun 需要 unzip，下载与解压还需要 curl、tar、sha256sum 或 shasum。
+
+安装后可直接运行 `mobile-herdr` 和 `mherdr`；若 PATH 未包含 `~/.local/bin`，先 `export PATH="$HOME/.local/bin:$PATH"`，或使用完整路径。下文的 `./bin/mobile-herdr` 均可替换为 `mobile-herdr`，无需进入安装目录。一键安装已装好 `mherdr`，无需再执行 install-agent；手动解压仍按下文安装。
+
+可先下载阅读脚本，再执行 `bash install.sh --help`。支持 `--version 0.2.2-beta.5`、`--prefix <目录>`、`--bin-dir <目录>` 和 `--no-install-bun`。默认版本随经过验证的发布更新，具体旧版必须已有对应 GitHub Release。脚本保留旧版本、不更改 token、不结束已有进程；重复安装同一个包可安全再次执行。已有同名非本工具命令时拒绝覆盖。
+
+安装只准备文件。确认 Herdr 已运行后，执行 `MOBILE_HERDR_HOST=0.0.0.0 mobile-herdr background`，再用手机可达地址运行 `mobile-herdr pair --url ...`；默认未设置 HOST 时只允许本机访问。首次环境要求、HTTPS 与安全配对说明仍见下文。
 
 ## 先确认环境
 
@@ -15,15 +29,15 @@
 从邀请人获取同一版本的 `.tar.gz` 与 `.tar.gz.sha256`，放在同一目录：
 
 ```bash
-sha256sum -c mobile-herdr-0.2.2-beta.4.tar.gz.sha256
-# macOS 上校验可用：shasum -a 256 -c mobile-herdr-0.2.2-beta.4.tar.gz.sha256
+sha256sum -c mobile-herdr-0.2.2-beta.5.tar.gz.sha256
+# macOS 上校验可用：shasum -a 256 -c mobile-herdr-0.2.2-beta.5.tar.gz.sha256
 
-tar -xzf mobile-herdr-0.2.2-beta.4.tar.gz
-cd mobile-herdr-0.2.2-beta.4
+tar -xzf mobile-herdr-0.2.2-beta.5.tar.gz
+cd mobile-herdr-0.2.2-beta.5
 ./bin/mobile-herdr --version
 ```
 
-保留整个解压目录；运行中的启动器和后台可能仍引用里面的文件。包附带第三方依赖许可文件，见 `THIRD_PARTY_NOTICES.md` 和 `licenses/`。这是一份私人内测包，尚未发布到 npm / App Store。
+保留整个解压目录；运行中的启动器和后台可能仍引用里面的文件。包附带第三方依赖许可文件，见 `THIRD_PARTY_NOTICES.md` 和 `licenses/`。这是 beta 包，尚未发布到 npm / App Store。
 
 ## 2. 启动 bridge，并让手机访问
 
@@ -64,7 +78,19 @@ MOBILE_HERDR_ORIGINS=https://你的开发机.tailnet名称.ts.net ./bin/mobile-h
 
 HTTPS 下可通过浏览器菜单添加到主屏幕。普通局域网 HTTP 可以使用界面，但通常不能安装 service worker。无需向公网暴露 7331 端口。
 
-第一次启动自动生成 `~/.local/state/mobile-herdr/token`（权限 0600）。也可在连接窗口手动填写地址和该文件中的密钥。默认端口为 7331；如冲突，可设置 `MOBILE_HERDR_PORT=7332`，配对地址也要相应调整。手动通过环境变量设置 token 时，bridge 与 pair 须使用相同环境。
+第一次启动自动生成 `~/.local/state/mobile-herdr/token`（权限 0600）。也可在连接窗口手动填写地址和该文件中的密钥。默认端口为 7331；如冲突，可设置 `MOBILE_HERDR_PORT=7332`，配对地址也要相应调整。
+
+### 自定义 token
+
+```bash
+./bin/mobile-herdr token set       # 隐藏输入，不回显
+./bin/mobile-herdr token status    # 仅看配置来源，不打印密钥
+# 源码目录对应：bun run token set
+```
+
+支持 24–4096 个非空白 ASCII 字符，推荐使用密码管理器生成的随机长串。命令原子保存到当前 state 的 token 文件，权限 0600；输入无效时保留原值。安装脚本和升级不覆盖该文件。自动化可将秘密管理器输出管道接到 `mobile-herdr token set --stdin`；不接受把密钥放在命令参数中。
+
+修改后需停止并重新启动 **Mobile Herdr bridge**，运行 pair 生成新二维码，再更新手机连接；旧 token 随旧 bridge 停止而失效，Herdr 和 agent 无需重启。环境变量 `MOBILE_HERDR_TOKEN` 优先于文件；若要使用保存值，须在启动 bridge 和 pair 前取消原环境变量。手动通过环境变量设置时，两个命令须使用同一值。token 不会热更新，也不会自动同步到其他 bridge。
 
 ## 3. 自动连接 Herdr SSH machines
 
@@ -135,6 +161,8 @@ Codex 新版 broker 可只读查询原 thread 历史；Pi 使用当前运行实�
 - **回退**：按同样步骤结束本次运行实例，停掉新 bridge，从保留的旧目录重新启动并重新安装启动器，再用完整 ID 恢复。不自动修改历史记录格式。
 - **保留连接**：升级和回退使用相同 state 目录与 token，手机连接信息可复用。不要把 state 目录复制进发布包。
 - **卸载**：结束本工具启动的原生实例、停止 bridge，确认 `~/.local/bin/mherdr` 是本工具安装的脚本后删除它和解压目录。浏览器“开发机”中移除保存的连接。state 中可能还有连接密钥，是否保留由使用者决定；无需删除 Herdr 或 agent 的历史。
+
+一键安装的升级仍运行安装命令；它只切换命令入口，不重启已有进程。旧目录保留在 prefix 的 `versions/` 中，正在运行的 agent 仍可引用它。回退到已发布版本可重跑安装脚本加 `--version <版本>`；也可先停止 bridge，再用保留版本目录中的 `bin/mobile-herdr` 启动。卸载前停止本工具进程，确认命令文件的 Mobile Herdr 标记后删除 `mobile-herdr`、`mherdr` 和 prefix；若 Bun 由本脚本安装，也随 prefix 一起移除。独立 token / state 默认保留。
 
 设置了 `MOBILE_HERDR_STATE` 时，bridge、pair 和 Herdr 中的 `mherdr` 必须使用同一值。
 

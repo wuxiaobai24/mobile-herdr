@@ -5,6 +5,7 @@ import { basename, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { createRelease } from './release';
+import { verifyInstall } from './verify-install';
 import { createNativeFixture } from '../tests/native-fixture';
 import { nativeCall } from '../server/native/registry';
 import { api, panePath } from '../shared/client';
@@ -15,8 +16,8 @@ import type { Machine, Snapshot } from '../shared/protocol';
 
 const checks: string[] = [];
 function check(name: string, condition: unknown): void { assert(condition, name); checks.push(name); }
-async function run(args: string[], env: NodeJS.ProcessEnv, cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
-  const child = Bun.spawn(args, { cwd, env, stdout: 'pipe', stderr: 'pipe' });
+async function run(args: string[], env: NodeJS.ProcessEnv, cwd: string, input?: string): Promise<{ code: number; stdout: string; stderr: string }> {
+  const child = Bun.spawn(args, { cwd, env, stdin: input === undefined ? 'ignore' : new Blob([input]), stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   return { code, stdout, stderr };
 }
@@ -46,7 +47,7 @@ try {
   check('third-party notices accompany bundled dependencies', entries.some(path => path.startsWith('licenses/react/')) && entries.some(path => path.startsWith('licenses/qrcode-terminal/')));
   check('theme attribution and MIT licenses accompany the runtime', entries.includes('licenses/themes/catppuccin.txt') && entries.includes('licenses/themes/flexoki.txt') && (await readFile(join(installation, 'THEME_CREDITS.md'), 'utf8')).includes('licenses/themes/'));
   const manifest = JSON.parse(await readFile(join(installation, 'release.json'), 'utf8'));
-  check('manifest identifies the beta version and source snapshot', manifest.version === version && manifest.channel === 'private-beta' && typeof manifest.sourceDirty === 'boolean');
+  check('manifest identifies the beta version and source snapshot', manifest.version === version && manifest.channel === 'beta' && typeof manifest.sourceDirty === 'boolean');
   const env: NodeJS.ProcessEnv = { ...process.env, MOBILE_HERDR_BUN: process.execPath, MOBILE_HERDR_STATE: join(directory, 'bridge-state'),
     MOBILE_HERDR_HOST: '127.0.0.1', MOBILE_HERDR_PORT: '0', MOBILE_HERDR_SOCKET: fixture.config.socket,
     HERDR_SOCKET: fixture.config.socket, HERDR_SOCKET_PATH: fixture.config.socket, HERDR_PANE_ID: fixture.snapshot.panes[0].pane_id,
@@ -66,6 +67,10 @@ try {
   await writeFile(join(protectedDirectory, 'mherdr'), 'unrelated user command\n');
   const refused = await run([wrapper, 'install-agent', '--bin-dir', protectedDirectory], env, directory);
   check('installation preserves an unrelated existing command', refused.code !== 0 && await readFile(join(protectedDirectory, 'mherdr'), 'utf8') === 'unrelated user command\n');
+  const customToken = createHash('sha256').update(directory).digest('hex');
+  const configured = await run([wrapper, 'token', 'set', '--stdin'], env, directory, customToken + '\n');
+  check('packaged token command saves a custom credential without printing it', configured.code === 0 && !configured.stdout.includes(customToken) && (await readFile(join(env.MOBILE_HERDR_STATE!, 'token'), 'utf8')).trim() === customToken);
+  await verifyInstall(archive, directory, check);
 
   let output = '';
   bridge = Bun.spawn([wrapper, 'start'], { env, cwd: directory, stdout: 'pipe', stderr: 'ignore' });
@@ -94,7 +99,7 @@ try {
   check('packaged JavaScript, CSS and xterm assets resolve', (await fetch(url + '/terminal.js')).ok && (await fetch(url + '/terminal.css')).ok);
   const anonymous = await fetch(url + '/api/info');
   const info = await api<{ version: string }>(machine, '/api/info');
-  check('packaged API requires auth and reports the release version', anonymous.status === 401 && info.version === version);
+  check('packaged API requires the saved custom token and reports the release version', anonymous.status === 401 && info.version === version && token === customToken);
   const snapshot = await api<Snapshot>(machine, '/api/snapshot');
   check('packaged bridge reads only the isolated fixture session', snapshot.panes[0].terminal_id === fixture.snapshot.panes[0].terminal_id);
   const paired = await run([wrapper, 'pair', '--url', url], env, directory);

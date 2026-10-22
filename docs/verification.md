@@ -126,3 +126,12 @@ Oil UI 版本检查记录：使用 0.18.1，提示可更新至 0.23.9，本任�
 - 所有写入、PTY、管理和 provider 测试只操作自身创建并清理的隔离 fixture / session / 进程。未重启、升级或停止用户的 Herdr，未停止用户的原生 agent，也未替换已运行的旧 bridge。另一台电脑的 SSH profiles 仍需在那台电脑运行入口才能发现。
 
 仍未完成真实手机键盘、中文输入法、锁屏 / 系统后台、macOS 或 ARM64 验收。后台命令不安装系统服务，不提供开机自启或崩溃自恢复；诊断仅比较页面与 bridge 版本，不查询远程更新。搜索仅覆盖已加载消息，历史受 provider / Herdr 保留范围限制，详细边界见 `beta-guide.md`。
+
+## 公开分发、一键安装与自定义 token（0.2.2-beta.5）
+
+- `bun run typecheck`、`bash -n install.sh`、`git diff --check` 通过。完整 opt-in 测试：`MOBILE_HERDR_LIVE=1 MOBILE_HERDR_NATIVE_LIVE=1 MOBILE_HERDR_SSH_LIVE=1 bun test tests`，**34 pass、0 fail、263 assertions**。新增 token 持久化 / 原子替换、0600、非法输入保留旧值、CLI 不打印密钥、不接受密钥参数和环境变量优先级检查。
+- 独立 Python PTY 在临时 state 中运行实际 `token set`，输入随机密钥，确认退出成功、保存一致、终端输出不含输入内容。没有修改用户 token 或运行中的 bridge。
+- `bun run test:release`：**31 checks 通过，Linux x64**。在原24项基础上增加运行包自定义 token，以及真实 shell 安装脚本的6项验证：带空格 / 单引号路径、重复安装、校验失败、同名命令保护、缺失版本、没有 Bun 时安装到独立 prefix。下载 transport 与 Bun 安装源使用本地替身，不修改真实 HOME 或 shell 配置。预构建 bridge 使用保存的自定义 token 完成 HTTP 鉴权，pair 的 fragment 读取相同值。
+- 重建静态资源后 `bun run test:ui`：**110 checks 通过、0 uncaught errors**；原手机宽度、450px 可视高度、主题、终端、审批、搜索、SSH 与页面恢复回归均通过。此次没有更改视觉布局，真实手机与跨平台验收边界不变。
+- 公开前检查全部 Git 提交差异：未发现常见 GitHub / API / AWS 凭证格式、私钥头、敏感文件名，亦未发现当前本机 token。该检查针对已列模式与本机已知值，不等同于完整安全审计。发布包仍使用显式文件清单，不携带 state、transcript 或本机配置。
+- 发布采用 clean HEAD 的源码标识与校验和，GitHub tag 为 `v0.2.2-beta.5`，默认安装版本固定为该已验收版本。安装不会自动停止 / 启动 bridge 或 Herdr；升级与 token 轮换需要使用者显式重启自己的 bridge。源码公开与 beta 分发不改变手机 / macOS / ARM64 尚待验收的状态。

@@ -1,8 +1,8 @@
-Mobile Herdr 0.2.2-beta.4 想邀请你帮忙试用：在手机浏览器里继续自己开发机上的 Herdr agent，支持 Codex / Pi 与电脑终端来回交接。
+Mobile Herdr 0.2.2-beta.5 想邀请你帮忙试用：在手机浏览器里继续自己开发机上的 Herdr agent，支持 Codex / Pi 与电脑终端来回交接。
 
 这次是私人内测，首批先验证 Linux x64；需要 Bun 1.4+、Herdr 0.9.3 / protocol 22，使用原生交接还需要已安装并登录的 Codex 或 Pi。手机不用装 App。
 
-我会发压缩包、SHA-256 和内测指南。校验、解压后即可启动，不用安装项目依赖或构建前端。请在你自己的开发机部署，生成自己的配对二维码。入口会自动连接同一账号保存的 Herdr SSH machines；远端需 Bun 1.4+ 和已运行的 Herdr，不必逐台添加 Web 地址。
+源码和安装说明：https://github.com/wuxiaobai24/mobile-herdr 。支持一键安装，也可下载压缩包和 SHA-256 手动解压，不用安装项目依赖或构建前端。请在你自己的开发机部署，生成自己的配对二维码；可用 mobile-herdr token set 隐藏输入自定义 token。入口会自动连接同一账号保存的 Herdr SSH machines；远端需 Bun 1.4+ 和已运行的 Herdr，不必逐台添加 Web 地址。
 
 希望你试试扫码连接、选择会话、发一条任务、手机 / 电脑交接、草稿刷新恢复、断网及锁屏后恢复。真实手机的键盘、中文输入法和后台行为还需要重点验证。
 

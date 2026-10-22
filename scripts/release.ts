@@ -43,11 +43,11 @@ async function dependencyNotices(destination: string): Promise<void> {
 function launcher(): string {
   return `#!/bin/sh
 set -eu
-APP_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+APP_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 case "\${1:-help}" in
   help|--help|-h)
-    echo 'Mobile Herdr ${version} — private beta'
-    echo 'Usage: ./bin/mobile-herdr <start|background|status|stop|pair|install-agent|agent|version>'
+    echo 'Mobile Herdr ${version} — beta'
+    echo 'Usage: ./bin/mobile-herdr <start|background|status|stop|token|pair|install-agent|agent|version>'
     echo 'start: run the bridge; configure its address with MOBILE_HERDR_HOST/PORT'
     echo 'pair --url <phone-accessible URL>: print a private pairing QR code'
     echo 'install-agent [--bin-dir <directory>]: install mherdr for Herdr panes'
@@ -56,6 +56,7 @@ case "\${1:-help}" in
   start) ENTRY='server/index.ts' ;;
   background|status|stop) ENTRY='scripts/bridge.ts' ;;
   pair) ENTRY='scripts/pair.ts' ;;
+  token) ENTRY='scripts/token.ts' ;;
   install-agent) ENTRY='scripts/install-agent.ts' ;;
   agent) ENTRY='scripts/agent.ts' ;;
   *) echo 'Unknown command; use --help.' >&2; exit 2 ;;
@@ -82,7 +83,7 @@ export async function createRelease(outputDirectory = join(root, 'artifacts/rele
   try {
     await mkdir(join(destination, 'bin'), { recursive: true });
     // Explicit allowlist: no home state, credentials, transcripts, tests or build artifacts.
-    for (const entry of ['server/index.ts', 'scripts/bridge.ts', 'scripts/agent.ts', 'scripts/native-host.ts', 'scripts/pair.ts', 'scripts/install-agent.ts']) {
+    for (const entry of ['server/index.ts', 'scripts/bridge.ts', 'scripts/token.ts', 'scripts/agent.ts', 'scripts/native-host.ts', 'scripts/pair.ts', 'scripts/install-agent.ts']) {
       await bundle(entry, join(destination, entry));
     }
     await bundle('server/ssh-worker.ts', join(destination, 'server/ssh-worker.bundle.js'));
@@ -99,7 +100,7 @@ export async function createRelease(outputDirectory = join(root, 'artifacts/rele
     await writeFile(join(destination, 'THEME_CREDITS.md'), (await readFile(join(root, 'docs/theme-credits.md'), 'utf8')).replaceAll('theme-licenses/', 'licenses/themes/'));
     const notices = join(destination, 'THIRD_PARTY_NOTICES.md');
     await writeFile(notices, await readFile(notices, 'utf8') + '\n## Color themes\n\nCatppuccin and Flexoki are MIT licensed. See THEME_CREDITS.md and licenses/themes/.\n');
-    await writeFile(join(destination, 'release.json'), JSON.stringify({ version, channel: 'private-beta', builtAt: new Date().toISOString(), buildBun: Bun.version,
+    await writeFile(join(destination, 'release.json'), JSON.stringify({ version, channel: 'beta', builtAt: new Date().toISOString(), buildBun: Bun.version,
       sourceCommit: await command(['git', 'rev-parse', 'HEAD']), sourceDirty: !!await command(['git', 'status', '--porcelain']),
       requirements: { bun: '>=1.4.0', herdr: '0.9.3 / protocol 22', platform: 'Linux or macOS; verify on each target before recommending it' },
     }, null, 2) + '\n');

@@ -1,6 +1,6 @@
 {
   "name": "mobile-herdr",
-  "version": "0.2.2-beta.4",
+  "version": "0.2.2-beta.5",
   "private": true,
   "type": "module",
   "main": "index.ts",
@@ -11,6 +11,7 @@
     "agent": "bun run scripts/agent.ts",
     "install:agent": "bun run scripts/install-agent.ts",
     "pair": "bun run scripts/pair.ts",
+    "token": "bun run scripts/token.ts",
     "start": "bun run scripts/build.ts && bun run server/index.ts",
     "build": "bun run scripts/build.ts",
     "native": "expo start",

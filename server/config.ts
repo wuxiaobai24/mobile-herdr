@@ -1,9 +1,10 @@
-import { chmod, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, stat } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { join, dirname } from 'node:path';
-import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
+import { timingSafeEqual, createHash } from 'node:crypto';
 import type { Session } from '../shared/protocol';
 import { BridgeError } from './rpc';
+import { savedToken, stateDirectory, validateToken } from './auth-token';
 
 export interface BridgeConfig {
   host: string; port: number; name: string; token: string; origins: string[];
@@ -11,22 +12,9 @@ export interface BridgeConfig {
   codexHome: string; claudeHome: string; piHome: string;
 }
 export async function loadConfig(overrides: { token?: string } = {}): Promise<BridgeConfig> {
-  const stateDir = process.env.MOBILE_HERDR_STATE ?? join(homedir(), '.local/state/mobile-herdr');
+  const stateDir = stateDirectory();
   await mkdir(stateDir, { recursive: true, mode: 0o700 });
-  const tokenPath = join(stateDir, 'token');
-  let token = overrides.token ?? process.env.MOBILE_HERDR_TOKEN;
-  if (!token) {
-    try { token = (await readFile(tokenPath, 'utf8')).trim(); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      const generated = randomBytes(32).toString('base64url');
-      try { await writeFile(tokenPath, generated + '\n', { mode: 0o600, flag: 'wx' }); }
-      catch (writeError) { if ((writeError as NodeJS.ErrnoException).code !== 'EEXIST') throw writeError; }
-      token = (await readFile(tokenPath, 'utf8')).trim();
-    }
-    await chmod(tokenPath, 0o600);
-  }
-  if (token.length < 24) throw new Error('MOBILE_HERDR_TOKEN 至少需要 24 个字符。');
+  const token = validateToken(overrides.token ?? process.env.MOBILE_HERDR_TOKEN ?? await savedToken(stateDir));
   return {
     host: process.env.MOBILE_HERDR_HOST ?? '127.0.0.1', port: Number(process.env.MOBILE_HERDR_PORT ?? 7331),
     name: process.env.MOBILE_HERDR_NAME ?? hostname(), token,
