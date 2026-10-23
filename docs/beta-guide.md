@@ -12,7 +12,7 @@ curl -fsSL https://raw.githubusercontent.com/wuxiaobai24/mobile-herdr/master/ins
 
 安装后可直接运行 `mobile-herdr` 和 `mherdr`；若 PATH 未包含 `~/.local/bin`，先 `export PATH="$HOME/.local/bin:$PATH"`，或使用完整路径。下文的 `./bin/mobile-herdr` 均可替换为 `mobile-herdr`，无需进入安装目录。一键安装已装好 `mherdr`，无需再执行 install-agent；手动解压仍按下文安装。
 
-可先下载阅读脚本，再执行 `bash install.sh --help`。支持 `--version 0.2.2-beta.6`、`--prefix <目录>`、`--bin-dir <目录>` 和 `--no-install-bun`。默认版本随经过验证的发布更新，具体旧版必须已有对应 GitHub Release。脚本保留旧版本、不更改 token、不结束已有进程；重复安装同一个包可安全再次执行。已有同名非本工具命令时拒绝覆盖。
+可先下载阅读脚本，再执行 `bash install.sh --help`。支持 `--version 0.2.2-beta.7`、`--prefix <目录>`、`--bin-dir <目录>` 和 `--no-install-bun`。默认版本随经过验证的发布更新，具体旧版必须已有对应 GitHub Release。脚本保留旧版本、不更改 token、不结束已有进程；重复安装同一个包可安全再次执行。已有同名非本工具命令时拒绝覆盖。
 
 安装只准备文件。确认 Herdr 已运行后，执行 `MOBILE_HERDR_HOST=0.0.0.0 mobile-herdr background`，再用手机可达地址运行 `mobile-herdr pair --url ...`；默认未设置 HOST 时只允许本机访问。首次环境要求、HTTPS 与安全配对说明仍见下文。
 
@@ -29,11 +29,11 @@ curl -fsSL https://raw.githubusercontent.com/wuxiaobai24/mobile-herdr/master/ins
 从邀请人获取同一版本的 `.tar.gz` 与 `.tar.gz.sha256`，放在同一目录：
 
 ```bash
-sha256sum -c mobile-herdr-0.2.2-beta.6.tar.gz.sha256
-# macOS 上校验可用：shasum -a 256 -c mobile-herdr-0.2.2-beta.6.tar.gz.sha256
+sha256sum -c mobile-herdr-0.2.2-beta.7.tar.gz.sha256
+# macOS 上校验可用：shasum -a 256 -c mobile-herdr-0.2.2-beta.7.tar.gz.sha256
 
-tar -xzf mobile-herdr-0.2.2-beta.6.tar.gz
-cd mobile-herdr-0.2.2-beta.6
+tar -xzf mobile-herdr-0.2.2-beta.7.tar.gz
+cd mobile-herdr-0.2.2-beta.7
 ./bin/mobile-herdr --version
 ```
 

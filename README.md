@@ -8,7 +8,7 @@ Web 与 Android 共用 React Native 界面、主题和会话协议，支持 Code
 
 ## 一键安装
 
-当前版本 **0.2.2-beta.6**，源码公开，运行包见 [GitHub Releases](https://github.com/wuxiaobai24/mobile-herdr/releases)。在已有 Herdr 的开发机执行：
+当前版本 **0.2.2-beta.7**，源码公开，运行包见 [GitHub Releases](https://github.com/wuxiaobai24/mobile-herdr/releases)。在已有 Herdr 的开发机执行：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wuxiaobai24/mobile-herdr/master/install.sh | bash
@@ -28,7 +28,7 @@ Token 不设置时自动生成；`mobile-herdr token set` 将自定义值持久�
 - 维护者：[打包验证与发布步骤](docs/releasing.md)
 - [可直接转发的邀请文字](docs/beta-invitation.md)
 
-在源码目录执行 `bun run test:release` 可生成并验证 bridge 运行包，输出至 `artifacts/releases/`。Android 使用 `bun run build:android`，输出至 `artifacts/android/`；当前 APK 通过源码本地构建，尚未上传公开 Releases。当前仍为 beta，不发布 npm 包。
+在源码目录执行 `bun run test:release` 可生成并验证 bridge 运行包，输出至 `artifacts/releases/`。Android 使用 `bun run build:android`，输出至 `artifacts/android/`；签名 APK 与校验文件随 GitHub prerelease 分发。当前仍为 beta，不发布 npm 包。
 
 ## 启动
 
