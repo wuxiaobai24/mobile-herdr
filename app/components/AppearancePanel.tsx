@@ -1,6 +1,6 @@
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { Check, Minus, Plus, X } from 'lucide-react-native';
-import { themes } from '../../shared/themes';
+import { themes, readingSizes } from '../../shared/themes';
 import { useTheme } from '../theme';
 
 export function AppearancePanel({ visible, onClose }: { visible: boolean; onClose: () => void }): React.JSX.Element {
@@ -18,7 +18,7 @@ export function AppearancePanel({ visible, onClose }: { visible: boolean; onClos
           </Pressable>)}
         </View>
         <View style={{ borderTopWidth: 1, borderColor: colors.line, paddingTop: 12, gap: 10 }}>
-          <SizeControl label="阅读字号" value={appearance.readingSize} values={[14, 16, 18, 20]} onChange={readingSize => void updateAppearance({ readingSize })} disabled={!ready} />
+          <SizeControl label="阅读字号" value={appearance.readingSize} values={readingSizes} onChange={readingSize => void updateAppearance({ readingSize })} disabled={!ready} />
           <SizeControl label="终端字号" value={appearance.terminalSize} values={[11, 13, 15, 17]} onChange={terminalSize => void updateAppearance({ terminalSize })} disabled={!ready} />
           <View style={[styles.row, { justifyContent: 'space-between', gap: 12 }]}><Text style={{ color: colors.muted, fontSize: 14 }}>阅读字体</Text><View style={[styles.row, { gap: 4 }]}>{(['system', 'mono'] as const).map(font => <Pressable key={font} accessibilityRole="button" accessibilityLabel={font === 'system' ? '系统字体' : '等宽字体'} accessibilityState={{ selected: appearance.readingFont === font }} disabled={!ready} onPress={() => void updateAppearance({ readingFont: font })} style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 8, backgroundColor: appearance.readingFont === font ? colors.hover : 'transparent' }}><Text style={{ color: appearance.readingFont === font ? colors.text : colors.muted, fontSize: 14 }}>{font === 'system' ? '系统' : '等宽'}</Text></Pressable>)}</View></View>
         </View>

@@ -34,5 +34,6 @@ input:focus,textarea:focus { outline: 2px solid var(--accent); outline-offset: -
 @media (prefers-reduced-motion: reduce) { *,*::before,*::after { animation: none!important; transition: none!important; } }
 
 [data-testid="composer"] { box-shadow: 0 4px 20px #00000014; transition: border-color .16s ease, box-shadow .16s ease; }
+@media (max-width: 899px) { [data-testid="composer"] { box-shadow: none; } }
 [data-testid="conversation-scroll"] { overscroll-behavior-y: contain; }
 @media (min-width: 900px) { [data-testid="conversation-content"] .markdown { line-height: 1.85; } }

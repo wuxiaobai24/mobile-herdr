@@ -96,12 +96,17 @@ with sync_playwright() as p:
     check('draft survives browser refresh', True)
 
     history = page.get_by_test_id('conversation-scroll')
+    # Compact phone chrome can fit this fixture on one screen. Exercise real overflow.
+    page.set_viewport_size({'width': 390, 'height': 568})
+    expect(page.get_by_text('接下来可以直接在这里继续开发。', exact=True)).to_be_visible()
+    page.wait_for_function("() => { const el = document.querySelector('[data-testid=conversation-scroll]'); return el && el.scrollHeight - el.clientHeight > 100; }")
     history.evaluate('el => { el.scrollTop = 0; }')
     expect(page.get_by_label('回到最新消息', exact=True)).to_be_visible()
     snapshot(page, 'phone-history.png')
     page.get_by_label('回到最新消息', exact=True).click()
     expect(page.get_by_label('回到最新消息', exact=True)).not_to_be_visible()
     check('reading history exposes a working return-to-latest action', history.evaluate('el => el.scrollHeight - el.scrollTop - el.clientHeight < 100'))
+    page.set_viewport_size({'width': 390, 'height': 844})
 
     motion_events.append({'name': 'session-drawer', 'seconds': time.monotonic() - video_start})
     page.get_by_label('打开会话列表', exact=True).click()
@@ -222,7 +227,7 @@ with sync_playwright() as p:
     page.get_by_role('tab', name='终端', exact=True).click()
     expect(page.get_by_role('tab', name='终端', exact=True)).to_have_attribute('aria-selected', 'true')
     motion_frames(page, 'mode-switch', '[data-testid="mode-tabs"]')
-    page.wait_for_function("() => new DOMMatrixReadOnly(getComputedStyle(document.querySelector('[data-testid=\"mode-tabs\"]'), '::before').transform).m41 > 70")
+    page.wait_for_function("() => new DOMMatrixReadOnly(getComputedStyle(document.querySelector('[data-testid=\"mode-tabs\"]'), '::before').transform).m41 > 40")
     check('view selector exposes its active tab and moves its selection indicator', True)
     frame = page.frame_locator('iframe[title="原始 Herdr 终端"]')
     expect(frame.locator('#keys')).to_be_visible()

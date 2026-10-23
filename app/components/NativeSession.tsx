@@ -1,15 +1,23 @@
-import { useState } from 'react';
+import type { TakeoverState } from '../../shared/takeover';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { ArrowLeftRight, ChevronDown, Monitor, Smartphone, X } from 'lucide-react-native';
 import type { NativeState } from '../../shared/native';
 import type { NativeControl } from '../useNativeControl';
 import { useTheme, mono } from '../theme';
 
-interface Props { state?: NativeState | null; control: NativeControl; provider?: string; online: boolean; compact?: boolean; onError: (text: string) => void }
-export function NativeSession({ state, control, provider, online, compact, onError }: Props): React.JSX.Element | null {
+interface Props { state?: NativeState | null; control: NativeControl; provider?: string; online: boolean; compact?: boolean; hideBar?: boolean; detailsOpen?: boolean; onDetailsClose?: () => void; onDetailsOpen?: () => void; onError: (text: string) => void; takeover?: TakeoverState | null; enabling?: boolean; onEnable: (cancel?: boolean) => Promise<void> }
+export function NativeSession({ state, control, provider, online, compact, hideBar, detailsOpen, onDetailsClose, onDetailsOpen, onError, takeover, enabling, onEnable }: Props): React.JSX.Element | null {
   const { colors, styles } = useTheme();
   const [details, setDetails] = useState(false);
+  const [setupError, setSetupError] = useState('');
   const [busy, setBusy] = useState(false);
+  useEffect(() => { if (takeover?.phase === 'ready' && control.owns) { setDetails(false); onDetailsClose?.(); } }, [takeover?.phase, control.owns]);
+  function closeDetails(): void { setDetails(false); onDetailsClose?.(); }
+  async function enable(cancel = false): Promise<void> {
+    setSetupError('');
+    try { await onEnable(cancel); } catch (error) { setSetupError(error instanceof Error ? error.message : '接管操作未确认，请查看当前状态。'); }
+  }
   async function handoff(): Promise<void> {
     setBusy(true);
     try { await control.act(control.owns ? 'release' : 'claim'); }
@@ -19,7 +27,7 @@ export function NativeSession({ state, control, provider, online, compact, onErr
   if (!state && !['codex', 'pi'].includes(provider ?? '')) return null;
   const connected = state?.connected;
   const ready = connected && !!state?.conversationId && state.ready !== false;
-  const other = state && state.owner !== 'desktop' && !control.owns;
+  const other = state && control.owner !== 'desktop' && !control.owns;
   const disabled = busy || !online || !connected || (!control.owns && !ready) || !!other || !control.clientId;
   function controlLabel(): string {
     if (!state) return '终端兼容模式';
@@ -34,8 +42,8 @@ export function NativeSession({ state, control, provider, online, compact, onErr
     return other ? '等待对方交还输入权' : '接管后发送，随时交还';
   }
   return <>
-    <View style={[styles.row, { gap: 10, paddingHorizontal: 16, paddingVertical: state && !compact ? 8 : 2, borderBottomWidth: 1, borderColor: colors.line, backgroundColor: control.owns ? colors.accentSurface : colors.sidebar }]}>
-      <Pressable accessibilityRole="button" accessibilityLabel="查看原生连接详情" onPress={() => setDetails(true)} style={[styles.row, { gap: 9, flex: 1, minHeight: 44 }]}>
+    {!hideBar && <View testID="native-session-bar" style={[styles.row, { gap: 10, paddingHorizontal: 12, paddingVertical: state && !compact ? 8 : 2, borderBottomWidth: 1, borderColor: colors.line, backgroundColor: control.owns ? colors.accentSurface : colors.sidebar }]}>
+      <Pressable accessibilityRole="button" accessibilityLabel="查看原生连接详情" onPress={() => { setDetails(true); onDetailsOpen?.(); }} style={[styles.row, { gap: 9, flex: 1, minHeight: 44 }]}>
         {control.owns ? <Smartphone size={17} color={colors.accent} /> : <Monitor size={17} color={colors.muted} />}
         <View style={{ flex: 1, gap: 3 }}><Text style={{ color: control.owns ? colors.accent : colors.text, fontSize: 13, fontWeight: '600' }}>{controlLabel()}</Text>
           {state && !compact && <Text numberOfLines={1} style={{ color: colors.muted, fontSize: 12 }}>{controlHint()}</Text>}</View>{!state && <Text style={{ color: colors.accent, fontSize: 13 }}>启用手机接管</Text>}<ChevronDown size={13} color={colors.muted} />
@@ -44,9 +52,9 @@ export function NativeSession({ state, control, provider, online, compact, onErr
         style={[styles.row, { gap: 6, minHeight: 44, paddingHorizontal: 12, borderRadius: 10, backgroundColor: control.owns ? colors.hover : colors.accent, opacity: disabled ? 0.45 : 1 }]}>
         {busy ? <ActivityIndicator size="small" color={colors.accentInk} /> : <ArrowLeftRight size={15} color={control.owns ? colors.text : colors.accentInk} />}<Text style={{ color: control.owns ? colors.text : colors.accentInk, fontSize: 13, fontWeight: '600' }}>{control.owns ? '交还电脑' : '在手机继续'}</Text>
       </Pressable>}
-    </View>
-    <Modal visible={details} transparent animationType="slide" onRequestClose={() => setDetails(false)}><View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: colors.overlay }}><View style={{ maxHeight: '80%', backgroundColor: colors.sidebar, padding: 22, borderTopLeftRadius: 18, borderTopRightRadius: 18, gap: 18, borderWidth: 1, borderColor: colors.line }}>
-      <View style={[styles.row, { justifyContent: 'space-between' }]}><Text style={{ color: colors.text, fontSize: 20, fontWeight: '600' }}>电脑与手机，接着做</Text><Pressable onPress={() => setDetails(false)} accessibilityLabel="关闭原生连接详情" style={{ padding: 10 }}><X size={20} color={colors.muted} /></Pressable></View>
+    </View>}
+    <Modal visible={details || !!detailsOpen} transparent animationType="slide" onRequestClose={closeDetails}><View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: colors.overlay }}><View style={{ maxHeight: '80%', backgroundColor: colors.sidebar, padding: 22, borderTopLeftRadius: 18, borderTopRightRadius: 18, gap: 18, borderWidth: 1, borderColor: colors.line }}>
+      <View style={[styles.row, { justifyContent: 'space-between' }]}><Text style={{ color: colors.text, fontSize: 20, fontWeight: '600' }}>电脑与手机，接着做</Text><Pressable onPress={closeDetails} accessibilityLabel="关闭原生连接详情" style={{ padding: 10 }}><X size={20} color={colors.muted} /></Pressable></View>
       <ScrollView contentContainerStyle={{ gap: 16, paddingBottom: 20 }}>
         {state ? <>
           <Text style={styles.text}>在手机点「在手机继续」，消息直接进入当前 agent。交还电脑，或在 Herdr 中按 Ctrl+]，即可接回输入权。</Text>
@@ -56,11 +64,13 @@ export function NativeSession({ state, control, provider, online, compact, onErr
           {state.capabilities.models && control.owns && <ModelOption state={state} control={control} onError={onError} />}
           {state.provider === 'pi' && <Text style={styles.muted}>Pi 标准确认框和问题可直接在对话中处理。其他扩展的自定义终端界面需交还电脑处理。</Text>}
         </> : <>
-          <Text style={styles.text}>先在 Herdr 的空闲终端里运行：</Text>
-          <Text selectable style={{ color: colors.accent, fontFamily: mono, fontSize: 16 }}>mherdr {provider}</Text>
-          <Text style={styles.muted}>现有会话继续使用原终端连接。首次迁移时，先结束当前任务并退出旧 CLI，再通过会话 ID 恢复。不会自动退出或复制你正在运行的 agent。</Text>
-          <Text selectable style={{ color: colors.text, fontFamily: mono, fontSize: 13, lineHeight: 22 }}>{provider === 'codex' ? 'mherdr codex resume <会话 ID>' : 'mherdr pi --session <会话 ID>'}</Text>
-          <Text style={styles.muted}>启用后回到这里，页面会自动显示「在手机继续」。</Text>
+          <Text style={styles.text}>接入当前 {provider === 'pi' ? 'Pi' : 'Codex'} 会话，将输入权切到手机。</Text>
+          <Text style={styles.muted}>{provider === 'pi' ? '保留原 Pi 进程和对话。当前任务完成后开始。' : '首次启用会等待任务完成，退出空闲 Codex 界面，再按准确会话 ID 恢复。之后切换只交接输入权。'}</Text>
+          {!!setupError && <Text accessibilityRole="alert" style={{color:colors.red,fontSize:14,lineHeight:22}}>{setupError}</Text>}
+          {takeover && <Text accessibilityLiveRegion="polite" accessibilityRole={takeover.phase === 'failed' ? 'alert' : undefined} style={{ color: takeover.phase === 'failed' ? colors.red : colors.text, fontSize: 14, lineHeight: 22 }}>{takeover.message}</Text>}
+          {(!takeover || ['failed', 'cancelled'].includes(takeover.phase)) && <Pressable accessibilityRole="button" accessibilityLabel="启用并接管当前会话" disabled={enabling || !online || !control.clientId || !!takeover && !['failed', 'cancelled', 'ready'].includes(takeover.phase)} onPress={() => void enable()} style={[styles.button, { opacity: enabling || !online || !!takeover && !['failed', 'cancelled', 'ready'].includes(takeover.phase) ? 0.5 : 1 }]}><Text style={styles.buttonText}>{enabling ? '正在提交…' : '启用并接管'}</Text></Pressable>}
+          {takeover?.cancellable && <Pressable accessibilityRole="button" accessibilityLabel="取消等待接管" onPress={() => void enable(true)} style={[styles.button, styles.secondary]}><Text style={styles.text}>取消等待</Text></Pressable>}
+
         </>}
       </ScrollView>
     </View></View></Modal>

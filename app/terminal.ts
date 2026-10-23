@@ -2,6 +2,7 @@ import { Terminal, type ITheme } from '@xterm/xterm';
 import { copyText } from './clipboard.web';
 import { FitAddon } from '@xterm/addon-fit';
 import { applyTheme, getTheme, parseAppearance, defaultAppearance, type ThemeColors } from '../shared/themes';
+import { isTerminalReply } from '../shared/terminal-keys';
 
 function terminalTheme(c: ThemeColors): ITheme {
   return { background: c.bg, foreground: c.text, cursor: c.accent, selectionBackground: c.accent + '55',
@@ -26,7 +27,14 @@ const keyboard = document.getElementById('keyboard') as HTMLButtonElement;
 terminal.loadAddon(fit); terminal.open(surface);
 let socket: WebSocket | undefined;
 let credentials: { token: string; session: string; pane: string; machine?: string } | undefined;
-let connected = false, disposing = false, retryCount = 0;
+let connected = false, disposing = false, suspended = false, retryCount = 0;
+let inputWritable = true, controlMessage = '', lastFailure = '';
+function inputState(): void {
+  keyboard.disabled = !connected || !inputWritable || !history.hidden;
+  document.querySelectorAll<HTMLButtonElement>('[data-key]').forEach(button => { button.disabled = keyboard.disabled; });
+  if (connected) state.textContent = inputWritable ? '实时终端 · 点击输入，滑动查看历史' : controlMessage;
+}
+const nativeBridge = (window as Window & { ReactNativeWebView?: { postMessage: (message: string) => void } }).ReactNativeWebView;
 let lastSeen = Date.now();
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -72,6 +80,7 @@ document.getElementById('history-bottom')!.onclick = () => { historyContent.scro
 document.getElementById('copy-history')!.onclick = () => {
   const selection = window.getSelection();
   const selected = selection?.anchorNode && historyContent.contains(selection.anchorNode) ? selection.toString() || selectedHistory : selectedHistory;
+  if (nativeBridge) { nativeBridge.postMessage(JSON.stringify({ type: 'copy', text: selected || historyText })); return; }
   void copyText(selected || historyText).then(() => { historyNote.textContent = selected ? '已复制选中内容' : '已复制历史'; }).catch(() => { historyNote.textContent = '复制不可用，请长按选择文字复制。'; });
 };
 
@@ -90,8 +99,7 @@ terminal.onWriteParsed(scrollState);
 function hideHistory(): void {
   historyRequest?.abort(); historyRequest = undefined;
   history.hidden = true; surface.hidden = false; toolbar.hidden = false; keys.hidden = false;
-  historyButton.setAttribute('aria-pressed', 'false'); keyboard.disabled = !connected;
-  document.querySelectorAll<HTMLButtonElement>('[data-key]').forEach(button => { button.disabled = !connected; });
+  historyButton.setAttribute('aria-pressed', 'false'); inputState();
   resize(); scrollState();
 }
 async function showHistory(): Promise<void> {
@@ -122,8 +130,8 @@ async function showHistory(): Promise<void> {
   }
 }
 function start(reset = true): void {
-  if (!credentials || disposing) return;
-  clearTimeout(reconnectTimer); clearInterval(heartbeat); lastSeen = Date.now();
+  if (!credentials || disposing || suspended) return;
+  clearTimeout(reconnectTimer); clearInterval(heartbeat); lastSeen = Date.now(); lastFailure = '';
   if (socket) { socket.onclose = null; socket.close(); }
   connected = false; if (reset) { hideHistory(); terminal.reset(); } scrollState(); state.textContent = '连接原始终端…';
   socket = new WebSocket(location.origin.replace(/^http/, 'ws') + '/api/terminal');
@@ -140,8 +148,9 @@ function start(reset = true): void {
     if (typeof event.data === 'string') {
       try {
         const frame = JSON.parse(event.data);
-        if (frame.type === 'ready') { connected = true; retryCount = 0; state.textContent = '实时终端 · 滑动查看历史'; if (history.hidden) hideHistory(); resize(); }
-        if (frame.type === 'error') state.textContent = frame.error.message;
+        if (frame.type === 'ready') { connected = true; retryCount = 0; if (history.hidden) hideHistory(); inputState(); resize(); }
+        if (frame.type === 'control') { inputWritable = frame.writable === true; controlMessage = frame.message || '终端当前只读'; inputState(); }
+        if (frame.type === 'error') { lastFailure = frame.error.message; state.textContent = lastFailure; }
       } catch { /* PTY frames are binary; reject unknown control frames. */ }
     } else terminal.write(new Uint8Array(event.data));
   };
@@ -149,7 +158,7 @@ function start(reset = true): void {
     if (active !== socket) return;
     connected = false; clearInterval(heartbeat); keyboard.disabled = true;
     document.querySelectorAll<HTMLButtonElement>('[data-key]').forEach(button => { button.disabled = true; });
-    state.textContent = event.code === 1008 ? '密钥无效，请重新配对' : '终端重连中 · 原会话继续运行';
+    state.textContent = lastFailure || (event.code === 1008 ? '密钥无效，请重新配对' : '终端重连中 · 原会话继续运行');
     if (event.code !== 1008 && !disposing && navigator.onLine) reconnectTimer = setTimeout(() => start(false), Math.min(15000, 750 * 2 ** Math.min(retryCount++, 5)));
   };
   active.onerror = () => { if (active === socket) state.textContent = '终端连接失败，请检查网络。'; };
@@ -159,6 +168,14 @@ function receive(event: MessageEvent): void {
   if (event.source && event.source !== window.parent && event.source !== window) return;
   let message;
   try { message = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch { return; }
+  if (message?.type === 'clipboard-result') { historyNote.textContent = message.ok ? '已复制到剪贴板' : '复制失败，请长按选择。'; return; }
+  if (message?.type === 'suspend') {
+    suspended = true; connected = false; clearTimeout(reconnectTimer); clearInterval(heartbeat); historyRequest?.abort();
+    if (socket) { socket.onclose = null; socket.close(); socket = undefined; }
+    terminal.blur(); keyboard.disabled = true;
+    document.querySelectorAll<HTMLButtonElement>('[data-key]').forEach(button => { button.disabled = true; });
+    state.textContent = '连接已暂停 · 原会话继续运行'; return;
+  }
   if (message?.type !== 'connect' || typeof message.token !== 'string' || typeof message.pane !== 'string' || typeof message.session !== 'string') return;
   const appearance = parseAppearance(message.appearance);
   const theme = getTheme(appearance.theme);
@@ -168,14 +185,15 @@ function receive(event: MessageEvent): void {
   document.documentElement.style.setProperty('--terminal-size', `${appearance.terminalSize}px`);
   resize();
   const next = { token: message.token, session: message.session, pane: message.pane, machine: typeof message.machine === 'string' ? message.machine : undefined };
-  if (JSON.stringify(credentials) === JSON.stringify(next)) return;
+  const resumed = suspended; suspended = false;
+  if (JSON.stringify(credentials) === JSON.stringify(next)) { if (resumed) start(false); return; }
   historyContent.textContent = ''; historyText = ''; queryField.value = '';
   credentials = next; start();
 }
 window.addEventListener('message', receive);
 // Android WebView's message event uses document; injected scripts use window.
 document.addEventListener('message', receive as EventListener);
-terminal.onData(data => { if (connected && history.hidden) socket?.send(JSON.stringify({ type: 'input', data })); });
+terminal.onData(data => { if (connected && history.hidden && (inputWritable || isTerminalReply(data))) socket?.send(JSON.stringify({ type: 'input', data })); });
 
 // Browsing never sends wheel reports or arrow keys to the running program.
 // Full-screen applications use the alternate buffer, which has no local scrollback.
@@ -190,22 +208,23 @@ terminal.attachCustomWheelEventHandler(event => {
   if (delta) { event.preventDefault(); browse(Math.sign(delta) * Math.max(1, Math.round(Math.abs(delta) / 20))); }
   return false;
 });
-let touch: { y: number; remainder: number } | undefined;
+let touch: { y: number; startY: number; startX: number; moved: boolean; remainder: number } | undefined;
 surface.addEventListener('touchstart', event => {
   if (event.touches.length !== 1) { touch = undefined; return; }
-  const point = event.touches[0]; touch = { y: point.clientY, remainder: 0 };
+  const point = event.touches[0]; touch = { y: point.clientY, startY: point.clientY, startX: point.clientX, moved: false, remainder: 0 };
   event.preventDefault(); event.stopImmediatePropagation();
 }, { capture: true, passive: false });
 surface.addEventListener('touchmove', event => {
   if (!touch || event.touches.length !== 1) return;
   event.preventDefault(); event.stopImmediatePropagation();
   const point = event.touches[0];
+  if (Math.abs(point.clientY - touch.startY) > 8 || Math.abs(point.clientX - touch.startX) > 8) touch.moved = true;
   const distance = touch.y - point.clientY;
   touch.y = point.clientY; touch.remainder += distance;
   const lines = Math.trunc(touch.remainder / 20);
   if (lines) { touch.remainder -= lines * 20; browse(lines); }
 }, { capture: true, passive: false });
-surface.addEventListener('touchend', event => { touch = undefined; event.stopImmediatePropagation(); }, { capture: true });
+surface.addEventListener('touchend', event => { if (touch && !touch.moved && connected && inputWritable && history.hidden) terminal.focus(); touch = undefined; event.stopImmediatePropagation(); }, { capture: true });
 surface.addEventListener('touchcancel', () => { touch = undefined; }, { capture: true });
 terminal.attachCustomKeyEventHandler(event => {
   if (event.type === 'keydown' && event.shiftKey && ['PageUp', 'PageDown'].includes(event.key)) {
@@ -216,7 +235,7 @@ terminal.attachCustomKeyEventHandler(event => {
 document.querySelectorAll<HTMLButtonElement>('[data-key]').forEach(button => {
   button.disabled = true;
   button.onclick = () => {
-    if (!connected || !history.hidden) return;
+    if (!connected || !inputWritable || !history.hidden) return;
     const key = JSON.parse('"' + button.dataset.key + '"');
     socket?.send(JSON.stringify({ type: 'input', data: key })); terminal.focus();
   };
@@ -226,10 +245,12 @@ document.getElementById('close-history')!.onclick = hideHistory;
 document.getElementById('refresh-history')!.onclick = () => void showHistory();
 latest.onclick = () => { terminal.scrollToBottom(); scrollState(); };
 keyboard.disabled = true;
-keyboard.onclick = () => { if (connected && history.hidden) terminal.focus(); };
+keyboard.onclick = () => { if (connected && inputWritable && history.hidden) terminal.focus(); };
 document.getElementById('reconnect')!.onclick = () => start(false);
 window.addEventListener('beforeunload', () => { disposing = true; clearInterval(heartbeat); clearTimeout(reconnectTimer); historyRequest?.abort(); socket?.close(); terminal.dispose(); });
 window.addEventListener('offline', () => { connected = false; socket?.close(); state.textContent = '设备已离线 · 历史可继续阅读'; });
 
 window.addEventListener('online', () => start(false));
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && credentials) start(false); });
+
+nativeBridge?.postMessage(JSON.stringify({ type: 'terminal-ready' }));

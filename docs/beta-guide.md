@@ -64,19 +64,9 @@ MOBILE_HERDR_HOST=0.0.0.0 ./bin/mobile-herdr background
 
 手机扫码并确认连接。不要把二维码和配对链接发给其他人；它们包含本机连接密钥。页面读取后会立即清除 fragment。每位朋友应生成自己的配对凭证，不共用邀请人的开发机密钥。
 
-**已有 Tailscale 的使用者**：开发机和手机登录自己的 tailnet。先为 loopback 上的 bridge 准备 HTTPS 入口：
+**公司内网域名**：由部署 agent 配置 Caddy 与公司证书，将 HTTPS 域名反向代理到 `127.0.0.1:7331`，设置同一 HTTPS origin 后用该域名配对。无需 Tailscale。可直接转发 [部署配置说明](deployment.md)，其中包括 Caddy、手机证书信任和 PWA 安装步骤。应用不会自行修改这些部署配置。
 
-```bash
-# 先按 Tailscale 提示启用 HTTPS；此命令会改变自己的 Serve 配置。
-tailscale serve --bg http://127.0.0.1:7331
-tailscale serve status
-# 把下面的域名替换为 status 显示的实际 HTTPS 地址（末尾不加 /）。
-MOBILE_HERDR_ORIGINS=https://你的开发机.tailnet名称.ts.net ./bin/mobile-herdr start
-```
-
-在另一个终端进入解压目录，运行 `./bin/mobile-herdr pair --url https://你的开发机.tailnet名称.ts.net`。具体开关与访问策略见 [Tailscale Serve 官方说明](https://tailscale.com/docs/reference/tailscale-cli/serve)。配置 `MOBILE_HERDR_ORIGINS` 用于允许 HTTPS 页面经本地代理访问 bridge；本包不自动配置 Tailscale、反向代理或防火墙。
-
-HTTPS 下可通过浏览器菜单添加到主屏幕。普通局域网 HTTP 可以使用界面，但通常不能安装 service worker。无需向公网暴露 7331 端口。
+HTTPS 下从“更多 → 安装到手机”进入 PWA 安装；普通内网 HTTP 可直接使用 Web 界面，但浏览器通常不允许安装 Service Worker。不要向公网直接暴露未受保护的 HTTP bridge。
 
 第一次启动自动生成 `~/.local/state/mobile-herdr/token`（权限 0600）。也可在连接窗口手动填写地址和该文件中的密钥。默认端口为 7331；如冲突，可设置 `MOBILE_HERDR_PORT=7332`，配对地址也要相应调整。
 

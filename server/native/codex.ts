@@ -5,6 +5,7 @@ import { NativeController } from './controller';
 import { BridgeError } from '../rpc';
 import { suppliedChanges } from '../../shared/diff';
 import { version } from '../../package.json';
+import { CODEX_FRAME_BYTES, ndjsonLines } from './ndjson';
 
 type Frame = Record<string, any>;
 type Desktop = ServerWebSocket<{ ready: boolean }>;
@@ -26,7 +27,10 @@ export class CodexRuntime {
   constructor(readonly control: NativeController, command: string, args: string[] = [], env: NodeJS.ProcessEnv = process.env) {
     const providerEnv = { ...env };
     for (const key of ['CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CODEX_TOOL_CALL_ID']) delete providerEnv[key];
-    this.child = Bun.spawn([command, ...args, 'app-server', '--stdio'], { env: providerEnv, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
+    const launch = env.MOBILE_HERDR_CODEX_TRANSPORT === 'proxy'
+      ? [process.execPath, 'run', env.MOBILE_HERDR_CODEX_PROXY_ADAPTER!, command, ...args]
+      : [command, ...args, 'app-server', '--stdio'];
+    this.child = Bun.spawn(launch, { env: providerEnv, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
     void this.read();
     // Drain diagnostics without putting transcripts, prompts or credentials in logs.
     const stderr = this.child.stderr;
@@ -43,7 +47,7 @@ export class CodexRuntime {
       await this.initialized;
       const threadId = control.state.conversationId;
       if (!threadId) throw new BridgeError('native_not_ready', '对话尚未准备好。', 409);
-      const page = await this.call('thread/turns/list', { threadId, cursor, limit: 20, sortDirection: 'desc', itemsView: 'full' });
+      const page = await this.call('thread/turns/list', { threadId, cursor, limit: 5, sortDirection: 'desc', itemsView: 'full' });
       return { messages: [...(page.data ?? [])].reverse().flatMap((turn: Frame) => (turn.items ?? []).map((item: Frame) => this.itemMessage(item)).filter(Boolean)), nextCursor: page.nextCursor ?? undefined };
     };
     control.perform = input => this.perform(input);
@@ -76,23 +80,17 @@ export class CodexRuntime {
   }
   private sendDesktop(frame: Frame): void {
     if (!this.desktop?.data.ready) return;
-    if (this.desktop.getBufferedAmount() > 1024 * 1024) { this.desktop.close(1013, 'slow_desktop'); return; }
+    if (this.desktop.getBufferedAmount() > CODEX_FRAME_BYTES * 2) { this.desktop.close(1013, 'slow_desktop'); return; }
     this.desktop.send(JSON.stringify(frame));
   }
   private async read(): Promise<void> {
-    const decoder = new TextDecoder(); let buffer = ''; let protocolStarted = false;
+    let protocolStarted = false;
     try {
-      for await (const chunk of this.child.stdout) {
-        buffer += decoder.decode(chunk, { stream: true });
-        if (buffer.length > 16 * 1024 * 1024) throw new Error('Codex 数据帧超过限制。');
-        let end: number;
-        while ((end = buffer.indexOf('\n')) >= 0) {
-          const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
+      for await (const line of ndjsonLines(this.child.stdout)) {
           // Version-manager launchers may print a prelude before exec'ing Codex.
           // Never log it: stdout can contain user environment information.
           if (!line.trim() || (!protocolStarted && !line.trimStart().startsWith('{'))) continue;
           protocolStarted = true; this.receive(JSON.parse(line));
-        }
       }
     } catch (error) { this.offline(error instanceof Error ? error : new Error('Codex 数据读取失败。')); }
   }
@@ -187,7 +185,7 @@ export class CodexRuntime {
     // Recent versions persist history in pages rather than returning it on resume.
     if (!turns.length) {
       try {
-        const history = await this.call('thread/turns/list', { threadId: thread.id, limit: 40, sortDirection: 'desc', itemsView: 'full' });
+        const history = await this.call('thread/turns/list', { threadId: thread.id, limit: 5, sortDirection: 'desc', itemsView: 'full' });
         if (state.conversationId === thread.id) {
           const live = [...state.messages]; state.messages = [];
           for (const turn of [...(history.data ?? [])].reverse()) {
@@ -256,7 +254,7 @@ export class CodexRuntime {
     this.proxy = Bun.serve<{ ready: boolean }>({ ...(typeof path === 'string' ? { unix: path } : { hostname: '127.0.0.1', port: path }),
       fetch(request, server) { if (server.upgrade(request, { data: { ready: false } })) return; return new Response(null, { status: 426 }); },
       websocket: {
-        maxPayloadLength: 2 * 1024 * 1024,
+        maxPayloadLength: CODEX_FRAME_BYTES, backpressureLimit: CODEX_FRAME_BYTES * 2,
         open(ws) { if (runtime.desktop) { ws.close(1008, 'desktop_already_connected'); return; } runtime.desktop = ws; },
         async message(ws, bytes) {
           try {
@@ -289,5 +287,7 @@ export class CodexRuntime {
       },
     });
   }
-  async close(): Promise<void> { this.stopped = true; this.proxy?.stop(true); this.child.kill(); await this.child.exited; }
+  async close(): Promise<void> {
+    if (!this.stopped && this.child.pid && this.control.state.connected && this.control.state.conversationId && this.turnId && ['working', 'blocked'].includes(this.control.state.status)) await this.call('turn/interrupt', { threadId: this.control.state.conversationId, turnId: this.turnId }).catch(() => {});
+    this.stopped = true; this.proxy?.stop(true); this.child.kill(); await this.child.exited; }
 }

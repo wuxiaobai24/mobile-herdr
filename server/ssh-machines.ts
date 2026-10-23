@@ -1,3 +1,4 @@
+import { nativeRuntimeAssets } from './native/assets';
 import { createServer, createConnection, type Socket } from 'node:net';
 import { chmod, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -72,7 +73,7 @@ export async function openSsh(profile: SshProfile): Promise<RemoteEndpoint> {
   }
 }
 async function openSshTransport(profile: SshProfile, transport: 'tcp' | 'unix'): Promise<RemoteEndpoint> {
-  const source = await workerSource();
+  const [source, assets] = await Promise.all([workerSource(), nativeRuntimeAssets(resolve(import.meta.dir, '..'))]);
   const directory = await mkdtemp(join(tmpdir(), 'mhs-'));
   await chmod(directory, 0o700);
   const localSocket = join(directory, 'bridge.sock');
@@ -126,7 +127,7 @@ async function openSshTransport(profile: SshProfile, transport: 'tcp' | 'unix'):
   })();
   try {
     // Code and the temporary credential travel only inside SSH stdin, never argv or logs.
-    child.stdin.write(source + `\nawait startSshWorker(${JSON.stringify({ ...(transport === 'unix' ? { socket: remoteSocket } : {}), token, session: profile.session })});\n`);
+    child.stdin.write(source + `\nawait startSshWorker(${JSON.stringify({ ...(transport === 'unix' ? { socket: remoteSocket } : {}), token, session: profile.session, assets })});\n`);
     child.stdin.end();
     for (let attempt = 0; attempt < 300 && !ready && child.exitCode === null; attempt++) await Bun.sleep(50);
     if (!ready || child.exitCode !== null) { if (child.exitCode !== null) await stderrDone; throw sshError(errorText, profile); }

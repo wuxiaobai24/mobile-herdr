@@ -78,3 +78,21 @@ describe('bridge over a real Unix socket', () => {
     expect(frame.type).toBe('state'); expect(frame.chat.source).toBe('pi'); expect(frame.snapshot.panes).toHaveLength(3);
   });
 });
+
+test('interrupt checks the fresh agent identity and never sends Ctrl+C to an idle shell; Pi uses Escape', async () => {
+  const fixture = await createFixture();
+  const machine: Machine = { id: 'interrupt-test', name: 'test', url: fixture.url, token: fixture.config.token };
+  const pane = fixture.snapshot.panes[0], path = panePath('default', pane.pane_id, 'interrupt');
+  const body = { terminalId: pane.terminal_id, agent: pane.agent, conversation: pane.agent_session?.value };
+  try {
+    await api(machine, path, { body });
+    expect(fixture.calls.some(row => row.method === 'agent.send_keys')).toBeFalse();
+    pane.agent_status = 'working';
+    await api(machine, path, { body, id: 'same-pi-interrupt' }); await api(machine, path, { body, id: 'same-pi-interrupt' });
+    expect(fixture.calls.filter(row => row.method === 'agent.send_keys').map(row => row.params)).toEqual([{ target: pane.pane_id, keys: ['esc'] }]);
+    pane.agent = 'codex'; pane.agent_status = 'working';
+    await expect(api(machine, path, { body })).rejects.toMatchObject({ code: 'agent_changed' });
+    await api(machine, path, { body: { ...body, agent: 'codex' } });
+    expect(fixture.calls.at(-1)).toMatchObject({ method: 'agent.send_keys', params: { keys: ['ctrl+c'] } });
+  } finally { await fixture.close(); }
+});

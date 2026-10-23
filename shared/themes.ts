@@ -120,11 +120,12 @@ export const themes: Theme[] = [
   }) },
 ];
 export interface Appearance { theme: string; readingSize: number; terminalSize: number; readingFont: 'system' | 'mono' }
+export const readingSizes = [12, 13, 14, 16, 18, 20];
 export const defaultAppearance: Appearance = { theme: 'mocha', readingSize: 16, terminalSize: 13, readingFont: 'system' };
 export function parseAppearance(value: unknown): Appearance {
   const a = value && typeof value === 'object' ? value as Partial<Appearance> : {};
   return { theme: themes.some(t => t.id === a.theme) ? a.theme! : defaultAppearance.theme,
-    readingSize: [14, 16, 18, 20].includes(a.readingSize!) ? a.readingSize! : 16,
+    readingSize: readingSizes.includes(a.readingSize!) ? a.readingSize! : 16,
     terminalSize: [11, 13, 15, 17].includes(a.terminalSize!) ? a.terminalSize! : 13,
     readingFont: a.readingFont === 'mono' ? 'mono' : 'system' };
 }

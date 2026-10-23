@@ -6,6 +6,7 @@ import type { BridgeInfo, Machine } from '../../shared/protocol';
 import { useTheme, mono } from '../theme';
 import type { Pairing } from '../pairing';
 import { isValidToken } from '../../shared/auth';
+import { PairingScanner } from './PairingScanner';
 
 interface Props { visible: boolean; canClose: boolean; onClose: () => void; onConnect: (machine: Machine, info: BridgeInfo) => Promise<void>; pairing?: Pairing }
 export function ConnectDialog({ visible, canClose, onClose, onConnect, pairing }: Props): React.JSX.Element {
@@ -34,6 +35,7 @@ export function ConnectDialog({ visible, canClose, onClose, onConnect, pairing }
       <View style={{ width: '100%', maxWidth: 448, backgroundColor: colors.sidebar, padding: width < 400 ? 20 : 28, borderRadius: 20, borderWidth: 1, borderColor: colors.line, gap: 20 }}>
         <View style={[styles.row, { justifyContent: 'space-between' }]}><View style={{ backgroundColor: colors.hover, padding: 12, borderRadius: 12 }}><Server size={23} color={colors.accent} /></View>{canClose && <Pressable accessibilityRole="button" accessibilityLabel="关闭连接窗口" onPress={onClose} style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}><X size={20} color={colors.muted} /></Pressable>}</View>
         <View><Text style={{ fontSize: 24, fontWeight: '600', color: colors.text }}>连接你的开发机</Text><Text style={[styles.muted, { marginTop: 8, fontSize: 14, lineHeight: 23 }]}>接着原来的会话，继续电脑上的任务。</Text></View>
+        {visible && <PairingScanner onPairing={value => { setUrl(value.url); setToken(value.token); setName(value.name ?? ''); setError(''); }} />}
         <View><Text style={styles.label}>Bridge 地址</Text><TextInput accessibilityLabel="Bridge 地址" value={url} onChangeText={setUrl} placeholder="https://devbox.example.com" placeholderTextColor={colors.muted} autoCapitalize="none" autoCorrect={false} keyboardType="url" style={[styles.field, { fontFamily: mono }]} /></View>
         <View><Text style={styles.label}>连接密钥</Text><TextInput accessibilityLabel="连接密钥" value={token} onChangeText={setToken} placeholder="粘贴开发机生成的密钥" placeholderTextColor={colors.muted} secureTextEntry autoCapitalize="none" autoCorrect={false} style={styles.field} /></View>
         <View style={[styles.row, { gap: 9, alignItems: 'flex-start' }]}><KeyRound color={colors.dim} size={16} style={{ marginTop: 2 }} /><View style={{ flex: 1, gap: 4 }}><Text style={styles.muted}>开发机运行 bun run pair，扫码即可连接；也可从以下文件复制密钥。</Text><Text selectable style={[styles.muted, { fontFamily: mono, fontSize: 12 }]}>~/.local/state/mobile-herdr/token</Text></View></View>

@@ -42,7 +42,7 @@ export function codexOptions(args: string[]): CodexOptions {
     }
     if (CODEX_SWITCHES.has(option) && option === token) {
       if (option === '--strict-config') result.serverArgs.push(token);
-      if (!['--all', '--include-non-interactive'].includes(option)) result.reattachArgs.push(token);
+      if (!['--all', '--include-non-interactive', '--no-daemon'].includes(option)) result.reattachArgs.push(token);
       continue;
     }
     if (token.startsWith('-')) throw new Error(`暂不支持 Codex 参数 ${option}；请用 mherdr codex --help 查看 CLI 帮助。`);

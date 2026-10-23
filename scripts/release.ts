@@ -47,7 +47,7 @@ APP_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 case "\${1:-help}" in
   help|--help|-h)
     echo 'Mobile Herdr ${version} — beta'
-    echo 'Usage: ./bin/mobile-herdr <start|background|status|stop|token|pair|install-agent|agent|version>'
+    echo 'Usage: ./bin/mobile-herdr <start|background|status|stop|token|pair|install-agent|agent|update|version>'
     echo 'start: run the bridge; configure its address with MOBILE_HERDR_HOST/PORT'
     echo 'pair --url <phone-accessible URL>: print a private pairing QR code'
     echo 'install-agent [--bin-dir <directory>]: install mherdr for Herdr panes'
@@ -59,6 +59,7 @@ case "\${1:-help}" in
   token) ENTRY='scripts/token.ts' ;;
   install-agent) ENTRY='scripts/install-agent.ts' ;;
   agent) ENTRY='scripts/agent.ts' ;;
+  update) ENTRY='scripts/update.ts' ;;
   *) echo 'Unknown command; use --help.' >&2; exit 2 ;;
 esac
 COMMAND=$1
@@ -83,13 +84,15 @@ export async function createRelease(outputDirectory = join(root, 'artifacts/rele
   try {
     await mkdir(join(destination, 'bin'), { recursive: true });
     // Explicit allowlist: no home state, credentials, transcripts, tests or build artifacts.
-    for (const entry of ['server/index.ts', 'scripts/bridge.ts', 'scripts/token.ts', 'scripts/agent.ts', 'scripts/native-host.ts', 'scripts/pair.ts', 'scripts/install-agent.ts']) {
+    for (const entry of ['server/index.ts', 'scripts/bridge.ts', 'scripts/token.ts', 'scripts/agent.ts', 'scripts/native-host.ts', 'scripts/pair.ts', 'scripts/install-agent.ts', 'scripts/takeover-launch.ts', 'scripts/update.ts', 'scripts/codex-proxy.ts']) {
       await bundle(entry, join(destination, entry));
     }
     await bundle('server/ssh-worker.ts', join(destination, 'server/ssh-worker.bundle.js'));
     // Pi loads this extension inside its Node process, not inside Bun.
     await bundle('plugins/pi/mobile-herdr.ts', join(destination, 'plugins/pi/mobile-herdr.ts'), 'node');
+    await cp(join(root, 'install.sh'), join(destination, 'install.sh'));
     await cp(join(root, 'dist'), join(destination, 'dist'), { recursive: true });
+    await cp(join(root, 'docs/deployment.md'), join(destination, 'deployment.md'));
     await cp(join(root, 'docs/beta-guide.md'), join(destination, 'README.md'));
     await writeFile(join(destination, 'package.json'), JSON.stringify({ name: 'mobile-herdr', version, private: true, type: 'module', engines: { bun: '>=1.4.0' }, scripts: {
       start: 'bun server/index.ts', pair: 'bun scripts/pair.ts', agent: 'bun scripts/agent.ts', 'install:agent': 'bun scripts/install-agent.ts',

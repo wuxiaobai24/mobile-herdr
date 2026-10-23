@@ -27,16 +27,17 @@ async function start(): Promise<void> {
   try {
     const current = await status(); if (current.running) { print(current); return; }
     directory = await mkdtemp(join(tmpdir(), 'mhb-')); await chmod(directory, 0o700);
-    const nonce = randomBytes(24).toString('hex');
+    const requestedNonce = process.env.MOBILE_HERDR_NEXT_NONCE;
+    const nonce = typeof requestedNonce === 'string' && /^[a-f0-9]{48}$/.test(requestedNonce) ? requestedNonce : randomBytes(24).toString('hex');
     const log = await open(join(stateDir, 'bridge.log'), 'a', 0o600); await log.chmod(0o600);
     try {
       child = spawn(process.execPath, ['run', resolve(import.meta.dir, '../server/index.ts')], { detached: true, stdio: ['ignore', log.fd, log.fd],
-        env: { ...process.env, MOBILE_HERDR_MANAGED_NONCE: nonce, MOBILE_HERDR_CONTROL_DIR: directory } });
+        env: { ...process.env, MOBILE_HERDR_NEXT_NONCE: undefined, MOBILE_HERDR_MANAGED_NONCE: nonce, MOBILE_HERDR_CONTROL_DIR: directory } });
     } finally { await log.close(); }
     child.on('error', () => {}); child.unref();
     for (let i = 0; i < 150; i++) {
       const saved = await record();
-      if (saved?.nonce === nonce) { const current = await managedRequest(saved, 'status'); print(current); return; }
+      if (saved && saved.nonce === nonce) { const current = await managedRequest(saved, 'status'); print(current); return; }
       if (child.exitCode !== null || child.signalCode) break;
       await Bun.sleep(50);
     }

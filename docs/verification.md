@@ -144,3 +144,33 @@ Oil UI 版本检查记录：使用 0.18.1，提示可更新至 0.23.9，本任�
 - `bun run typecheck`、`git diff --check`、重建静态资源后的 `bun run test:ui`（**32 + 20 + 14 + 25 + 20 = 111 checks**，0 uncaught errors）通过。`bun run test:release` **31 checks** 通过（Linux x64），包括8字符 token 的打包鉴权和配对、安装器重复执行与失败保留。
 - 错误原因不再仅归于 `AllowStreamLocalForwarding`。[OpenSSH 的路径连接实现](https://github.com/openssh/openssh-portable/blob/V_10_5_P1/channels.c) 还检查整体转发权限；隔离测试发现仅开启 StreamLocal 并不能保证被全局策略限制时可用。因此 Unix 是兼容回退，不能承诺绕过服务端限制。
 - 远端没有常驻 Web bridge 时，扫描 IP 端口不能提供 Web 服务。自动模式只经 SSH 启动临时 bridge 并探测实际端口，不猜测固定7331，不向未知端口投递入口 token；现有独立 bridge 可由用户手动添加地址直连。用户另一台电脑的实际 profile 未在本机验证，需在保存 profiles 的入口电脑更新并重启 Mobile Herdr bridge。
+
+## Android 独立客户端（2026-10-23）
+
+- 生成 `artifacts/android/mobile-herdr.apk`：release、非 debuggable、Android versionCode 1 / versionName 0.2.2，minSdk 24 / targetSdk 36，包含 arm64-v8a 与 x86_64。APK 内置 Hermes 字节码，模拟器无 Metro 启动通过。`apksigner verify` 通过，SHA-256 随 APK 输出。
+- Expo SDK 58 兼容检查通过，React / React DOM 精确对齐 19.3.0，WebView 使用 SDK 推荐的 14.0.1。签名密钥和密码保存在仓库外的私有 state 目录；Android 原生目录由 Expo Prebuild 生成并忽略版本控制，增量构建使用 `--no-clean`。
+- `bun run typecheck` 通过；本轮最终完整 `bun test tests` 为 **42 通过、6 跳过、0 失败**（302 次断言）。其中新增 Android 检查覆盖 CLI / deep-link 配对兼容、非法载荷、32000 字符中文草稿与发送回执重开数据库后完整恢复、旧 SecureStore 草稿迁移、存储失败保留及恢复、Markdown / 外链协议限制。
+- 最终 `bun run test:ui` 为 **32 项兼容模式 + 20 项接管 + 14 项 SSH + 25 项外观 / 终端 + 22 项阅读体验**，全部通过、0 uncaught errors。较早的三轮 Web 基线回归也全部通过；新增共享控制权回执修复之后重新构建并完成最终整套检查。短视口检查使用真实溢出的 390×568 fixture，避免对一屏可容纳的内容断言历史按钮。
+- `MOBILE_HERDR_ANDROID_SERIAL=emulator-5580 bun run test:android`：**19 项通过**，Android 15 / API 35 专用模拟器、release APK、uiautomator2。覆盖不依赖 Metro 启动、相机拒权回退、冷 / 热启动配对确认、精确 session / pane、Markdown 与搜索定位、接管、单次投递、审批、结构化问题、后台返回并核对桌面输入权、进程重启与同签名覆盖安装保留 SQLite 草稿和 SecureStore 连接、断线不重放、共享主题、系统返回键、WebView 终端历史和原生剪贴板。
+- 原生验证暴露并修复 Android 全面屏键盘遮挡输入框，以及搜索目标在后续布局变化时重复定位的问题。接管 / 交还的 HTTP 回执在下一次 watch frame 到达前即参与输入权和 epoch 判断，避免快速切换使用旧 fence；更高 epoch 的服务端状态仍覆盖旧回执。
+- `MOBILE_HERDR_LIVE=1 bun test tests/live-herdr.test.ts`：1 项通过，真实独立 Herdr session 的 PTY 在手机分离后继续存活。Android UI 的原始终端验证使用 fixture 的只读历史；不把它描述为真实 Android → Herdr PTY 全链路输入验收。
+- 证据：`artifacts/android/ui/verification.json`、`connect.png`、`chat.png`、`reading-search.png`、`keyboard.png`、`sent.png`、`approval.png`、`desktop-owner.png`、`offline.png`、`appearance-light.png`、`terminal-history.png`；完整日志为 `artifacts/android/native-accepted.log`、`web-accepted.log` 和 `build-accepted.log`。主 Agent 自检实际截图，未做独立视觉评审。
+
+边界：未验证实体手机扫码识别、中文输入法组合输入、厂商省电策略、长时间锁屏 / Doze、其他 Android OS / ABI 的实机行为；当前没有后台 push 或常驻连接保证，也不交付 iOS 安装包。终端页面由 bridge 提供，原生复制和显式暂停需使用包含本轮终端适配的 bridge。所有写入、进程重启和覆盖安装只发生于专用模拟器或测试创建的 Unix socket / provider / Herdr session；没有重启、升级或终止用户已有 Herdr 或 agent。
+
+## 2026-10-23 手机界面与首次一键接管
+
+- `bun run typecheck` 通过；默认测试47项通过、6项按环境跳过，320个断言。包含逐帧64MiB限制、17MiB Codex响应、原生控制权、精确身份、中断键映射、补丁聚合、更新失败回滚及远端组件缓存。
+- `MOBILE_HERDR_SSH_LIVE=1 bun test tests/ssh.test.ts`：5项通过，真实隔离OpenSSH覆盖TCP、Unix回退、双通道拒绝及原生输入权；只操作fixture和临时sshd。
+- `bun scripts/verify-packaged-takeover.ts`：解压后的包接入普通Pi与Codex。Pi PID与会话不变；Codex重连原TUI、daemon PID集合与会话不变，没有新建第二份执行后端。均完成手机任务、交还电脑、桌面再发任务。模型仅使用本地隔离协议服务，没有重放初始提示。
+- `bun scripts/verify-terminal-live.ts`：真实Herdr隔离pane中，从浏览器xterm键盘与Enter快捷键发出命令并读取原PTY回显；点击终端可重新聚焦。未向用户会话写入。
+- `bun run test:release`：32项通过，包含SHA-256、私有配置、安装器、启动器、后台控制、接管与更新入口和运行包外目录启动。
+- 页面回归包含基础32、原生20、SSH14、外观25、阅读 / diff23、手机布局23和PWA12项，共149项；交付前连续三轮结果为149/149、149/149、149/149，每轮0未捕获异常。
+
+PWA检查包含图标解码与尺寸、首次完整预缓存、API与凭证不入缓存、离线外壳及草稿、重连不重放、浏览器安装提示与安装完成事件。没有将模拟浏览器安装事件描述为真实手机安装。
+
+当前源码改动与本地产物尚未作为新的GitHub release发布；更新入口会读取实际已发布的完整运行包。公司HTTPS / Caddy由部署agent按 `deployment.md` 配置，应用未修改此机器的代理、TLS或网络。
+
+已将此项目原先直接启动的Web bridge以相同地址与凭证迁至受管理服务（7331），只向已核验的原Web进程发送SIGTERM；启动后验证原密钥有效、接管API可用及managed诊断标记。没有停止Herdr或用户agent，也没有向用户pane发送命令。当前mherdr启动器指向本工作区代码。
+
+提交前再次通过类型检查、47项单测（6项环境跳过、320个断言）和重建后的149项Web检查。使用原签名重新构建包含最新共享界面的release APK，并在本轮启动的专用 `emulator-5580` 上通过19项Android检查；测试仅使用隔离fixture，结束后关闭该模拟器。日志为 `artifacts/ui/prepush.log`、`artifacts/android/build-prepush.log` 和 `artifacts/android/native-prepush.log`。APK、日志、签名文件均不入库；实体手机边界不变。本次只推送源码，不创建GitHub release或版本标签。

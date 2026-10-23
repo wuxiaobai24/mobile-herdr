@@ -1,12 +1,36 @@
 {
   "expo": {
-    "name": "Mobile Herdr", "slug": "mobile-herdr", "version": "0.1.0", "scheme": "mobile-herdr",
-    "orientation": "default", "userInterfaceStyle": "dark",
+    "name": "Mobile Herdr",
+    "slug": "mobile-herdr",
+    "version": "0.2.2",
+    "scheme": "mobile-herdr",
+    "icon": "./assets/icon.png",
+    "orientation": "default",
+    "userInterfaceStyle": "automatic",
     "ios": {
-      "bundleIdentifier": "dev.mobileherdr.app", "supportsTablet": true,
-      "infoPlist": { "NSLocalNetworkUsageDescription": "连接你的开发机上的 Herdr bridge。", "NSAppTransportSecurity": { "NSAllowsArbitraryLoads": true, "NSAllowsArbitraryLoadsInWebContent": true } }
+      "bundleIdentifier": "dev.mobileherdr.app",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "连接你的开发机上的 Herdr bridge。",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true,
+          "NSAllowsArbitraryLoadsInWebContent": true
+        }
+      }
     },
-    "android": { "package": "dev.mobileherdr.app", "softwareKeyboardLayoutMode": "resize" },
-    "plugins": ["expo-secure-store", "./plugins/with-local-network.cjs"]
+    "android": {
+      "package": "dev.mobileherdr.app",
+      "versionCode": 1,
+      "allowBackup": false,
+      "blockedPermissions": ["android.permission.RECORD_AUDIO", "android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE", "android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO", "android.permission.SYSTEM_ALERT_WINDOW"],
+      "softwareKeyboardLayoutMode": "resize"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "./plugins/with-local-network.cjs",
+      "expo-sqlite",
+      ["expo-camera", { "cameraPermission": "扫描开发机上的 Mobile Herdr 配对二维码。", "recordAudioAndroid": false, "barcodeScannerEnabled": true }],
+      "./plugins/with-android-release.cjs"
+    ]
   }
 }

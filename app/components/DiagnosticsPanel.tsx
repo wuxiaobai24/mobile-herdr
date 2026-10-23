@@ -16,7 +16,7 @@ export function DiagnosticsPanel({ visible, machine, session, pane, onClose }: {
     void api<DiagnosticReport>(machine, `/api/diagnostics?${new URLSearchParams({ session, ...(pane ? { pane } : {}) })}`).then(value => { if (!cancelled) setReport(value); }).catch(() => { if (!cancelled) setError('无法取得诊断。请检查连接或更新 bridge 后重试。'); }).finally(() => { if (!cancelled) setBusy(false); });
     return () => { cancelled = true; };
   }, [visible, machine?.id, machine?.url, machine?.token, session, pane, generation]);
-  async function copy(): Promise<void> { if (!report) return; try { await copyText(exportDiagnostics(report, version)); setCopied(true); } catch { setError('复制不可用，请在支持复制的浏览器中重试。'); } }
+  async function copy(): Promise<void> { if (!report) return; try { await copyText(exportDiagnostics(report, version)); setCopied(true); } catch { setError('复制失败，请重试或手动选择文字。'); } }
   return <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}><ScrollView style={{ flex: 1, backgroundColor: colors.overlay }} contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: 16 }}><View style={{ width: '100%', maxWidth: 440, backgroundColor: colors.sidebar, borderRadius: 18, padding: 22, gap: 18 }}>
     <View style={[styles.row, { justifyContent: 'space-between' }]}><Text style={{ color: colors.text, fontSize: 21, fontWeight: '600' }}>连接诊断</Text><Pressable accessibilityRole="button" accessibilityLabel="关闭连接诊断" onPress={onClose} style={{ padding: 12 }}><X size={20} color={colors.muted} /></Pressable></View>
     <Text style={styles.muted}>页面 {version}{report ? ` · bridge ${report.bridgeVersion}` : ''}</Text>

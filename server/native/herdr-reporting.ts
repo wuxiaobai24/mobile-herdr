@@ -17,6 +17,7 @@ export function reportToHerdr(control: NativeController): () => Promise<void> {
         agent_session_id: state.conversationId,
         message: state.owner === 'desktop' ? '电脑控制 · 手机可接管' : '手机控制 · Ctrl+] 接回',
       });
+      if (state.conversationId) await rpc(control.record.herdrSocket, 'pane.report_agent_session', { ...identity, seq: ++sequence, agent_session_id: state.conversationId });
       previous = signature;
     } catch { /* Web access remains available if this Herdr lacks report support. */ }
     finally { running = false; }

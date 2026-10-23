@@ -1,3 +1,5 @@
+import { startUpdate, updateStatus } from './updates';
+import { Takeovers } from './native/takeover';
 import { join, resolve, sep } from 'node:path';
 import type { ServerWebSocket } from 'bun';
 import type { Conversation, Pane, Snapshot, HistoryPage } from '../shared/protocol';
@@ -7,7 +9,7 @@ import { historyCursor, historyIdentity } from './history';
 import { Transcripts } from './transcripts';
 import type { NativeAction, NativeState } from '../shared/native';
 import { findNative, nativeCall } from './native/registry';
-import { isDesktopReclaim } from '../shared/terminal-keys';
+import { isDesktopReclaim, isTerminalReply } from '../shared/terminal-keys';
 import { version } from '../package.json';
 import type { DiagnosticReport } from '../shared/diagnostics';
 import type { RemoteGateway } from './ssh-machines';
@@ -16,17 +18,35 @@ interface SocketData {
   kind: 'watch' | 'terminal'; authenticated: boolean; timer?: ReturnType<typeof setInterval>;
   deadline?: ReturnType<typeof setTimeout>; process?: Bun.Subprocess; closed?: boolean;
   nativeEndpoint?: string;
+  terminalWritable?: boolean;
   remote?: WebSocket;
   remoteRouting?: boolean;
 }
 const SAFE_KEYS = new Set(['enter', 'esc', 'up', 'down', 'left', 'right', 'tab', 'ctrl+c', 'ctrl+d', 'ctrl+l', 'backspace']);
 
-export function createBridge(config: BridgeConfig, options: { remotes?: RemoteGateway; unix?: string; onActivity?: () => void } = {}): Bun.Server<SocketData> {
+export function createBridge(config: BridgeConfig, options: { remotes?: RemoteGateway; unix?: string; onActivity?: () => void; runtimeRoot?: string } = {}): Bun.Server<SocketData> {
   const transcripts = new Transcripts(config);
+  const takeovers = new Takeovers(config, options.runtimeRoot ?? resolve(import.meta.dir, '..'), options.onActivity);
   const publicDir = resolve(import.meta.dir, '../dist');
   const mutationResults = new Map<string, { at: number; promise: Promise<unknown> }>();
   const clients = new Set<ServerWebSocket<SocketData>>();
   const nativeDirectory = join(config.stateDir, 'native');
+
+  async function terminalControl(ws: ServerWebSocket<SocketData>): Promise<boolean> {
+    if (!ws.data.nativeEndpoint) return true;
+    let writable = false;
+    let message = '原生连接中断，终端只读。请在电脑检查当前会话。';
+    try {
+      const state = await nativeCall<NativeState>(ws.data.nativeEndpoint, { method: 'state' });
+      writable = state.connected && state.owner === 'desktop';
+      if (state.connected) message = writable ? '' : 'Chat 正在控制此会话。交还输入权后可使用终端键盘。';
+    } catch { /* Keep the original terminal readable when the provider is unavailable. */ }
+    if (!ws.data.closed && ws.data.terminalWritable !== writable) {
+      ws.data.terminalWritable = writable;
+      ws.send(JSON.stringify({ type: 'control', writable, message }));
+    }
+    return writable;
+  }
 
   async function nativeState(socket: string, pane: Pane): Promise<NativeState | undefined> {
     const record = await findNative(nativeDirectory, socket, pane);
@@ -130,6 +150,12 @@ export function createBridge(config: BridgeConfig, options: { remotes?: RemoteGa
             const result = request.method === 'POST' ? await mutate(request, forward) as { status: number; value: unknown } : await forward();
             return response(request, result.value, result.status);
           }
+          if (url.pathname === '/api/update') {
+            if (request.method === 'GET') return response(request, await updateStatus(config.stateDir).catch(error => { throw new BridgeError('update_check_failed', error.message, 502); }));
+            if (request.method === 'POST' && takeovers.busy) throw new BridgeError('takeover_busy', '当前正在启用手机接管，请完成或取消后再更新。', 409);
+            if (request.method === 'POST') return response(request, await mutate(request, () => startUpdate(resolve(import.meta.dir, '..'), config.stateDir, process.pid).catch(error => { throw new BridgeError('update_failed', error.message, 409); })));
+            throw new BridgeError('method_not_allowed', '请求方法无效。', 405);
+          }
           if (request.method === 'GET' && url.pathname === '/api/machines') return response(request, options.remotes ? await options.remotes.list() : { machines: [] });
           if (request.method === 'GET' && url.pathname === '/api/info') {
             return response(request, { name: config.name, version, nativeProtocols: ['codex-app-server', 'pi-extension'], sessions: (await sessions(config)).map(({ socket: _, ...session }) => session) });
@@ -152,11 +178,12 @@ export function createBridge(config: BridgeConfig, options: { remotes?: RemoteGa
           }
           const socket = await resolveSession(config, url.searchParams.get('session') ?? 'default');
           if (request.method === 'GET' && url.pathname === '/api/snapshot') return response(request, await snapshot(socket));
-          const match = url.pathname.match(/^\/api\/panes\/([^/]+)\/(chat|history|screen|bind|prompt|keys|launch|native)$/);
+          const match = url.pathname.match(/^\/api\/panes\/([^/]+)\/(chat|history|screen|bind|prompt|keys|interrupt|launch|native|takeover)$/);
           if (!match) throw new BridgeError('not_found', '接口不存在。', 404);
           const id = decodeURIComponent(match[1]);
           const pane = await getPane(socket, id);
           const action = match[2];
+          if (request.method === 'GET' && action === 'takeover') return response(request, takeovers.get(socket, pane));
           if (request.method === 'GET' && action === 'native') return response(request, await nativeState(socket, pane) ?? null);
           if (request.method === 'GET' && action === 'chat') { const native = await nativeState(socket, pane); return response(request, native ? nativeChat(native) : await transcripts.read(socket, pane)); }
           if (request.method === 'GET' && action === 'history') {
@@ -180,6 +207,7 @@ export function createBridge(config: BridgeConfig, options: { remotes?: RemoteGa
           if (request.method !== 'POST') throw new BridgeError('method_not_allowed', '请求方法无效。', 405);
           const result = await mutate(request, async () => {
             const input = await body(request);
+            if (action === 'takeover') return takeovers.start(socket, await getPane(socket, id), input);
             const native = await findNative(nativeDirectory, socket, pane);
             if (action === 'native') {
               if (!native) throw new BridgeError('native_unavailable', '此 pane 尚未启用原生连接。请按页面说明在电脑启动。', 409);
@@ -188,7 +216,15 @@ export function createBridge(config: BridgeConfig, options: { remotes?: RemoteGa
               if (!current?.connected) throw new BridgeError('native_offline', current?.error ?? '原生连接已中断。', 409);
               return nativeCall(native.endpoint, { method: 'action', input: { ...input, requestId: request.headers.get('x-request-id')! } as unknown as NativeAction }, 14000);
             }
-            if (native && ['prompt', 'keys', 'launch', 'bind'].includes(action)) throw new BridgeError('native_control_required', '此 pane 已启用原生连接，请使用原生 Chat 控件。', 409);
+            if (native && ['prompt', 'keys', 'interrupt', 'launch', 'bind'].includes(action)) throw new BridgeError('native_control_required', '此 pane 已启用原生连接，请使用原生 Chat 控件。', 409);
+            if (action === 'interrupt') {
+              const current = await getPane(socket, id);
+              if (current.terminal_id !== input.terminalId || current.agent !== input.agent || current.agent_session?.value !== input.conversation) throw new BridgeError('agent_changed', '此 pane 的 agent 已变化，请检查当前会话。', 409);
+              if (!current.agent || !['pi', 'codex', 'claude'].includes(current.agent)) throw new BridgeError('unsupported_agent', '此 agent 的中断方式未知，请在终端操作。', 409);
+              if (['idle', 'done'].includes(current.agent_status)) return { ok: true, alreadyStopped: true };
+              if (!['working', 'blocked'].includes(current.agent_status)) throw new BridgeError('agent_not_ready', '无法确认 agent 状态，请先查看终端。', 409);
+              return rpc(socket, 'agent.send_keys', { target: id, keys: [current.agent === 'codex' ? 'ctrl+c' : 'esc'] });
+            }
             if (action === 'bind') { await transcripts.bind(socket, pane, string(input.candidateId, 256)); return { ok: true }; }
             if (action === 'prompt') {
               if (!pane.agent) throw new BridgeError('not_an_agent', '此 pane 中没有 agent，请使用终端。', 409);
@@ -236,12 +272,11 @@ export function createBridge(config: BridgeConfig, options: { remotes?: RemoteGa
               return;
             }
             const input = JSON.parse(String(message));
-            if (input.type === 'ping') { ws.send(JSON.stringify({ type: 'pong' })); return; }
+            if (input.type === 'ping') { ws.send(JSON.stringify({ type: 'pong' })); if (ws.data.kind === 'terminal') void terminalControl(ws); return; }
             if (ws.data.kind !== 'terminal' || !ws.data.process?.terminal) return;
             if (ws.data.nativeEndpoint && input.type === 'input') {
-              const state = await nativeCall<NativeState>(ws.data.nativeEndpoint, { method: 'state' });
-              if (state.owner !== 'desktop') {
-                if (typeof input.data === 'string' && isDesktopReclaim(input.data)) await nativeCall(ws.data.nativeEndpoint, { method: 'desktop' });
+              if (!await terminalControl(ws) && !(typeof input.data === 'string' && isTerminalReply(input.data))) {
+                if (typeof input.data === 'string' && isDesktopReclaim(input.data)) { await nativeCall(ws.data.nativeEndpoint, { method: 'desktop' }); await terminalControl(ws); }
                 return;
               }
             }
@@ -292,7 +327,8 @@ export function createBridge(config: BridgeConfig, options: { remotes?: RemoteGa
               },
             });
             ws.data.process = process;
-            void process.exited.then(() => { if (!ws.data.closed) ws.close(1000, 'terminal_detached'); });
+            void process.exited.then(code => { if (!ws.data.closed) { if (code !== 0) ws.send(JSON.stringify({ type: 'error', error: { message: `终端连接失败（退出码 ${code}）。请查看终端输出或检查开发机上的 Herdr。` } })); ws.close(code === 0 ? 1000 : 1011, 'terminal_detached'); } });
+            await terminalControl(ws);
             ws.send(JSON.stringify({ type: 'ready' }));
           } else {
             let running = false;

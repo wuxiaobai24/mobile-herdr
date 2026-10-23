@@ -3,7 +3,7 @@ import { chmod, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BridgeConfig } from './config';
 import { version } from '../package.json';
-export interface ManagedRecord { nonce: string; socket: string; directory: string; pid: number; url: string; startedAt: string }
+export interface ManagedRecord { nonce: string; socket: string; directory: string; pid: number; url: string; startedAt: string; restart?: Record<string, string> }
 export async function managedRequest(record: ManagedRecord, action: 'status' | 'stop'): Promise<{ running: boolean; version?: string; pid?: number; url?: string; startedAt?: string }> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(record.socket); let buffer = '';
@@ -18,6 +18,7 @@ export async function serveManagement(config: BridgeConfig, port: number, stop: 
   if (!nonce || !/^[a-f0-9]{48}$/.test(nonce) || !directory) return;
   const recordPath = join(config.stateDir, 'bridge.json');
   const record: ManagedRecord = { nonce, socket: join(directory, 'control.sock'), directory, pid: process.pid,
+    restart: { ...Object.fromEntries(Object.entries(process.env).filter(([key, value]) => !!value && key.startsWith('MOBILE_HERDR_') && !['MOBILE_HERDR_MANAGED_NONCE', 'MOBILE_HERDR_CONTROL_DIR'].includes(key))) as Record<string, string>, MOBILE_HERDR_STATE: config.stateDir, MOBILE_HERDR_HOST: config.host, MOBILE_HERDR_PORT: String(port), MOBILE_HERDR_TOKEN: config.token, MOBILE_HERDR_ORIGINS: config.origins.join(','), MOBILE_HERDR_HERDR_HOME: config.herdrHome, CODEX_HOME: config.codexHome, CLAUDE_CONFIG_DIR: config.claudeHome, PI_CODING_AGENT_DIR: config.piHome, ...(config.socket ? { MOBILE_HERDR_SOCKET: config.socket, HERDR_SOCKET: config.socket } : {}) },
     url: `http://${config.host === '0.0.0.0' || config.host === '::' ? '127.0.0.1' : config.host.includes(':') ? `[${config.host}]` : config.host}:${port}`, startedAt: new Date().toISOString() };
   const sockets = new Set<Socket>();
   const server = createServer(socket => {

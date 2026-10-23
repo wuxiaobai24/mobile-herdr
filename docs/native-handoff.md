@@ -4,13 +4,13 @@
 
 ## Codex
 
-`mherdr codex` 在当前 Herdr pane 注册一个本地 broker。Broker 启动一份 `codex app-server --stdio`，官方 Codex TUI 通过私有 Unix WebSocket 接入 broker。Web bridge 通过另一条私有 Unix socket 访问其状态和操作。
+`mherdr codex` 在当前 Herdr pane 注册一个本地 broker。新建会话时 broker 启动一份 `codex app-server --stdio`；首次接管普通 Codex 默认 daemon 时，通过官方 `app-server proxy` 和 WebSocket Upgrade 复用已加载的原后端，官方 Codex TUI 通过私有 Unix WebSocket 接入 broker。Web bridge 通过另一条私有 Unix socket 访问其状态和操作。
 
 所有 TUI 请求经过同一个连接转发，broker 关联请求 ID，向 TUI转发原始流式事件，将主会话事件规范化给 Web。手机接管时阻止桌面修改型请求和审批响应；接回电脑后恢复。Codex 生成标题等用途的 ephemeral thread 不参与主对话绑定。
 
 手机原生操作包括 `turn/start`、`turn/steer`、`turn/interrupt`、标准命令 / 文件审批和结构化用户问题。未实现的特殊协议请求要求交还电脑。模型列表来自安装的 CLI；手机选定的模型用于之后的手机任务，电脑 TUI 的模型选择仍由其控件管理。
 
-TUI 退出不会停止 broker；重新运行 `mherdr codex` 恢复相同 thread。`mherdr stop` 显式结束当前 pane 的后台原生 agent。初次恢复普通 CLI 会话前必须退出旧 CLI，不允许两个独立 app-server 同时恢复相同历史。可识别的其他 Herdr pane 占用会被拒绝；跨 Herdr / 其他产品的占用仍需用户先退出原客户端。
+TUI 退出不会停止 broker；重新运行 `mherdr codex` 恢复相同 thread。`mherdr stop` 显式结束当前 pane 的后台原生 agent。首次可从手机“启用并接管”，自动等待空闲、确认会话 ID、退出原 CLI 并恢复；也可手动退出再运行 mherdr。不允许两个独立 app-server 同时恢复相同历史。可识别的其他 Herdr pane 占用会被拒绝；跨 Herdr / 其他产品的占用仍需用户先退出原客户端。
 
 首次启动的 TUI 选项单独保存在私有的 `<runtime>.launch.json`（0600），用于重连；不保存位置参数中的初始提示词或图片参数，不在注册摘要 / HTTP 接口中暴露启动参数。后台停止时清理此文件。重连先通过本地 `attach` 操作暂停接管，等官方 TUI 完成精确 thread 恢复后开放手机写入，避免恢复历史覆盖并发消息。旧版后台没有这份启动配置时明确拒绝重连，不猜原配置、不自动停止它。
 
@@ -20,7 +20,7 @@ TUI 退出不会停止 broker；重新运行 `mherdr codex` 恢复相同 thread�
 
 ## Pi
 
-`mherdr pi` 启动原 Pi TUI并加载项目的桥接扩展。扩展在原进程中订阅消息、工具和生命周期事件，通过扩展 API提交消息、steer、停止和切换可用模型，不恢复第二份 Pi。
+`mherdr pi` 启动原 Pi TUI并加载项目的桥接扩展。已有普通 Pi 可从手机一键安装托管个人扩展并 `/reload`，在原进程接入；禁用扩展的实例保持原状。扩展在原进程中订阅消息、工具和生命周期事件，通过扩展 API提交消息、steer、停止和切换可用模型，不恢复第二份 Pi。
 
 标准扩展 UI 的 `confirm/select/input/editor` 转发为手机卡片，保留取消信号和超时。交还电脑时未完成的手机弹窗回到原 UI处理；已在电脑打开的弹窗须先完成，再允许接管。其他扩展的自定义终端组件不保证手机原生覆盖。扩展使用 Pi公开的 UI context 包装标准方法；其他扩展若替换或预先缓存方法，仍可能绕过这条转发路径。
 
@@ -39,7 +39,7 @@ Pi 恢复只接受完整 session UUID 或可读会话文件；只读取文件头
 - 出错后不切回 `agent.prompt`，防止把原生消息误发给终端。普通会话继续走原来的 Herdr 提交路径。
 - IPC目录权限 0700、注册文件和 socket 0600。Codex / Pi 协议不直接暴露到网络；浏览器使用原 bridge 的鉴权。
 
-原生重连快照限制最近 160 条、约 120,000 字符，单项文本 / 输出限制 12,000 字符；Codex 恢复时读取最近 40 个 turn。完整历史仍在 agent 自己的会话存储中，尚无完整历史分页 UI。原生流通过约 300ms 合并的 WebSocket 状态更新送达，Herdr topology 约 1.5s 更新。
+原生重连快照限制最近 160 条、约 120,000 字符，单项文本 / 输出限制 12,000 字符；Codex 恢复时读取最近5个 turn，使用原生 API 向前分页。完整历史仍在 agent 自己的会话存储中。单个 NDJSON 帧按 UTF-8 字节限制64MiB，不将同一读取批次中的多个帧误判为超限。原生流通过约 300ms 合并的 WebSocket 状态更新送达，Herdr topology 约 1.5s 更新。
 
 ## 与研究对象的取舍
 

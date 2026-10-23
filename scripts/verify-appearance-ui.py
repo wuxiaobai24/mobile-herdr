@@ -36,7 +36,7 @@ with sync_playwright() as p:
     page.get_by_label('发给原会话的消息', exact=True).fill('切换主题时保留草稿')
     expect(page.get_by_text('草稿已保存', exact=True)).to_be_visible()
     snapshot(page, 'mocha-chat.png')
-    page.get_by_label('外观设置', exact=True).click()
+    page.get_by_label('更多会话操作', exact=True).click(); page.get_by_label('外观设置', exact=True).click()
     snapshot(page, 'theme-settings.png')
     for id, name, bg in [('latte','Catppuccin Latte','#eff1f5'), ('macchiato','Catppuccin Macchiato','#24273a'), ('frappe','Catppuccin Frappé','#303446'), ('flexoki-dark','Flexoki Dark','#100f0f'), ('flexoki-light','Flexoki Light','#fffcf0'), ('mocha','Catppuccin Mocha','#1e1e2e')]:
         page.get_by_role('radio', name=name, exact=True).click()
@@ -68,7 +68,7 @@ with sync_playwright() as p:
     expect(page.locator('.markdown').first).to_have_css('font-size', '20px')
     expect(page.get_by_label('发给原会话的消息', exact=True)).to_have_value('切换主题时保留草稿')
     check('theme, typography and the pane draft survive reload')
-    page.get_by_label('外观设置', exact=True).click()
+    page.get_by_label('更多会话操作', exact=True).click(); page.get_by_label('外观设置', exact=True).click()
     # A real storage failure must be visible without undoing the live preview.
     page.evaluate("""() => { window.originalSet = Storage.prototype.setItem; Storage.prototype.setItem = function(k,v) { if(k.endsWith(':appearance')) throw new Error('fixture storage failure'); return window.originalSet.call(this,k,v); }; }""")
     page.get_by_role('radio', name='Catppuccin Latte', exact=True).click()
@@ -128,7 +128,7 @@ with sync_playwright() as p:
     expect(frame.locator('#latest')).not_to_be_visible()
     check('return-to-live restores terminal follow')
     auth_before = len([f for f in frames if f['type']=='auth'])
-    page.get_by_label('外观设置', exact=True).click()
+    page.get_by_label('更多会话操作', exact=True).click(); page.get_by_label('外观设置', exact=True).click()
     page.get_by_role('radio', name='Flexoki Light', exact=True).click()
     page.get_by_label('增大终端字号', exact=True).click()
     page.get_by_label('关闭外观设置', exact=True).click()

@@ -10,7 +10,7 @@ if (!directory || !identity.terminalId || !identity.paneId || !identity.herdrSoc
 const control = new NativeController(directory, identity, 'codex');
 const serverArgs: unknown = JSON.parse(process.env.MOBILE_HERDR_CODEX_SERVER_ARGS ?? '[]');
 if (!Array.isArray(serverArgs) || !serverArgs.every(value => typeof value === 'string')) throw new Error('无效的 Codex 后台配置。');
-const runtime = new CodexRuntime(control, process.env.MOBILE_HERDR_CODEX_BINARY ?? 'codex', serverArgs);
+const runtime = new CodexRuntime(control, process.env.MOBILE_HERDR_CODEX_BINARY ?? 'codex', serverArgs, { ...process.env, MOBILE_HERDR_CODEX_PROXY_ADAPTER: join(import.meta.dir, 'codex-proxy.ts') });
 try {
   await runtime.listen(join(directory, control.state.runtimeId + '.tui.sock'));
   await control.listen();

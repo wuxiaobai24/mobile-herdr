@@ -1,10 +1,10 @@
 # Mobile Herdr
 
-从手机浏览器继续开发机上已经运行的 Herdr agent。复用同一个 session、同一个 pane 和同一个 agent 进程。
+从手机浏览器或 Android 客户端继续开发机上已经运行的 Herdr agent。复用同一个 session、pane 和对话；已接入的会话在电脑与手机之间交接输入权。
 
-移动 Web 支持 Codex / Pi 原生 Chat 与电脑终端之间交接控制权，以及原始终端、多开发机、草稿恢复和断网重连。保留 Expo 代码结构供以后做原生端，**本次不交付原生安装包**。
+Web 与 Android 共用 React Native 界面、主题和会话协议，支持 Codex / Pi Chat 与电脑终端之间交接控制权，以及原始终端、多开发机、草稿恢复和断网重连。Android 可构建独立签名 APK，安装后无需 Expo Go 或 Metro；扫码、剪贴板、安全存储和系统返回键使用原生能力。构建、安装与验收边界见 [Android 客户端](docs/android.md)。
 
-顶栏“外观”支持 Catppuccin 四款与 Flexoki 深浅主题，可调整阅读字体、阅读字号和终端字号。终端支持手势翻阅、历史查找、选择复制与回到实时。对话支持向前分页、查找已加载消息、跳回上一问；补丁和文件审批按文件展示 Diff，可折叠、查看双栏行号并复制。
+手机主界面保留一行导航与单行输入框，搜索、历史、改动总览、外观和更新位于“更多”菜单。外观支持 Catppuccin 四款与 Flexoki 深浅主题，可调整阅读字体、阅读字号和终端字号。终端支持手势翻阅、历史查找、选择复制与回到实时。对话支持向前分页、查找已加载消息、跳回上一问；补丁和文件审批按文件展示 Diff，可折叠、查看双栏行号并复制。
 
 ## 一键安装
 
@@ -20,7 +20,7 @@ mobile-herdr pair --url http://你的开发机局域网IP:7331
 
 脚本校验 SHA-256，安装 `mobile-herdr` 和 `mherdr`，无需 sudo、git clone、安装前端依赖或构建。缺少 Bun 时从 [Bun 官方安装入口](https://bun.sh/docs/installation) 安装 1.4.0 到本工具目录；已有 Bun 不自动升级。不会安装、启动或停止 Herdr，不自动启动 bridge，不修改 shell 配置。仅 Linux x64 已完成验证；macOS / ARM64 与真实手机仍需验收。
 
-可先下载并阅读脚本，或用 `bash install.sh --help` 查看版本和路径选项。默认包目录 `~/.local/share/mobile-herdr`，命令目录 `~/.local/bin`；旧版本与 token 均保留。升级后需自行停止旧 bridge、再启动新版，原生 agent 能力升级见指南。
+可先下载并阅读脚本，或用 `bash install.sh --help` 查看版本和路径选项。默认包目录 `~/.local/share/mobile-herdr`，命令目录 `~/.local/bin`；旧版本与 token 均保留。由后台服务管理的 bridge 支持“更多 → 版本更新”或 `mobile-herdr update`，自动校验、切换并在启动失败时回滚。原生 agent 能力升级见指南。
 
 Token 不设置时自动生成；`mobile-herdr token set` 将自定义值持久保存在当前 state 的 `token` 文件（0600），启动和配对共用。支持 8–4096 个非空白 ASCII 字符，请使用随机长串。设置后重启 **Mobile Herdr bridge** 并重新配对即可，Herdr / agent 无需重启。`MOBILE_HERDR_TOKEN` 环境变量仍支持，且优先于文件；`mobile-herdr token status` 仅显示配置来源，不打印密钥。自动化可用 `token set --stdin`，不要把密钥写入命令参数或仓库。
 
@@ -28,7 +28,7 @@ Token 不设置时自动生成；`mobile-herdr token set` 将自定义值持久�
 - 维护者：[打包验证与发布步骤](docs/releasing.md)
 - [可直接转发的邀请文字](docs/beta-invitation.md)
 
-在源码目录执行 `bun run test:release` 可生成并验证运行包，输出至 `artifacts/releases/`。当前仍为 beta，不发布 npm 或手机安装包。
+在源码目录执行 `bun run test:release` 可生成并验证 bridge 运行包，输出至 `artifacts/releases/`。Android 使用 `bun run build:android`，输出至 `artifacts/android/`；当前 APK 通过源码本地构建，尚未上传公开 Releases。当前仍为 beta，不发布 npm 包。
 
 ## 启动
 
@@ -43,7 +43,7 @@ bun run start
 
 希望关闭终端后继续运行 Web bridge，可先 `bun run build`，再执行 `bun run service start`；`bun run service status` 查看版本与状态，`bun run service stop` 停止该命令管理的 bridge。这些命令不停止 Herdr 或 agent，也不接管手动启动的前台 bridge。当前不安装开机自启服务。
 
-手机通过局域网 / Tailscale 直连时：
+手机通过局域网直连时：
 
 ```bash
 MOBILE_HERDR_HOST=0.0.0.0 bun run start
@@ -53,11 +53,15 @@ bun run pair --url http://192.168.1.8:7331
 
 扫描终端二维码，在手机上确认连接。也可以手动输入地址和 `~/.local/state/mobile-herdr/token` 文件里的密钥。二维码包含同一连接凭证，fragment 会在页面读取后立即清除，凭证不会放进 HTTP 查询参数或 WebSocket URL。
 
-在反向代理 / Tailscale Serve 后使用 HTTPS，可以安装为 PWA。普通局域网 HTTP 可以使用 Web 界面，但浏览器通常不会允许安装 service worker。不要把 HTTP 入口直接暴露到不可信网络。
+公司内网域名可通过 Caddy 提供 HTTPS 并安装为 PWA，无需 Tailscale。给部署 agent 的完整配置见 [公司网络与 PWA 部署](docs/deployment.md)。普通局域网 HTTP 可以使用 Web 界面，但浏览器通常不会允许安装 service worker。不要把 HTTP 入口直接暴露到不可信网络。
 
 ## 继续已有会话
 
-### Codex / Pi：电脑和手机共用一个运行实例
+### Codex / Pi：一键接管当前会话
+
+已有普通 CLI 会话时，在手机点“更多 → 启用手机接管 → 启用并接管”。Pi 热加载原进程；Codex 首次等待任务完成，再自动退出空闲界面并按准确 ID 恢复。无法确认身份时会保留原 CLI。已接入后，切换“终端”交还输入权，切回“对话”自动接管；电脑按 `Ctrl+]` 接回。自动首次接入目前验证 Linux，限制见 [部署说明](docs/deployment.md)。
+
+新会话也可使用以下启动命令：
 
 在项目目录安装启动命令一次：
 

@@ -2,3 +2,4 @@
 export function isDesktopReclaim(data: string): boolean {
   return data.includes('\u001d') || /\u001b\[(?:93|29);5(?::[123])?u/.test(data);
 }
+export function isTerminalReply(data: string): boolean { return /^\u001b\[[?>]?[\d;]*[Rcn]$/.test(data); }

@@ -88,6 +88,7 @@ else
   printf '%s\n' "$EXPECTED" > "$STAGE/$NAME/.archive-sha256"
   mv "$STAGE/$NAME" "$DESTINATION"
 fi
+"$BUN_BIN" -e 'const fs=require("node:fs");fs.writeFileSync(process.argv[1],JSON.stringify({prefix:process.argv[2],binDir:process.argv[3]}),{mode:0o600})' "$DESTINATION/.installation.json" "$PREFIX" "$BIN_DIR"
 # Quote literal filesystem paths, including spaces and apostrophes, for the wrappers.
 quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
 {

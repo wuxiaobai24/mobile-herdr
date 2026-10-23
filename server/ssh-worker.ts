@@ -1,3 +1,4 @@
+import { materializeNativeAssets, type NativeAssets } from './native/assets';
 import { chmod, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -5,7 +6,7 @@ import { loadConfig } from './config';
 import { createBridge } from './server';
 import { rpc } from './rpc';
 
-export async function startSshWorker(input: { socket?: string; token: string; session: string }): Promise<void> {
+export async function startSshWorker(input: { socket?: string; token: string; session: string; assets: NativeAssets }): Promise<void> {
   try {
     const [major, minor] = Bun.version.split('.').map(Number);
     if (major < 1 || major === 1 && minor < 4) { console.error('MOBILE_HERDR_BUN_MISSING'); process.exitCode = 1; return; }
@@ -20,8 +21,9 @@ export async function startSshWorker(input: { socket?: string; token: string; se
     if (snapshot.snapshot.protocol !== 22) throw new Error('Unsupported protocol.');
     // Preserve the remote native registry location; the gateway credential is temporary.
     const config = { ...await loadConfig({ token: input.token }), socket: status.socket, host: '127.0.0.1', port: 0, origins: [] };
+    const runtimeRoot = await materializeNativeAssets(config.stateDir, input.assets);
     let lastActivity = Date.now();
-    const bridge = createBridge(config, { unix: input.socket, onActivity: () => { lastActivity = Date.now(); } });
+    const bridge = createBridge(config, { runtimeRoot, unix: input.socket, onActivity: () => { lastActivity = Date.now(); } });
     if (input.socket) await chmod(input.socket, 0o600);
     let stopping = false;
     async function stop(): Promise<void> {

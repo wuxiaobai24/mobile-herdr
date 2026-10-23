@@ -6,6 +6,7 @@
 - Prefer Herdr-reported transcript identity. Never silently attach the newest transcript based on cwd. Unreported sessions require explicit selection.
 - No automatic replay of writes after reconnect. Keep drafts on failures. Deduplicate ambiguous retries by request ID.
 - Keep auth tokens out of query strings, logs, screenshots, and checked-in files. The CLI pairing fragment is an intentional credential handoff and is removed immediately on page load.
-- The current delivery target is phone-first Web. Expo files are a future native starting point, not an accepted native release.
+- Delivery targets are phone-first Web and the Expo / React Native Android APK. Share UI components, themes and session logic; isolate platform capabilities in platform files. A successful bundle alone is not native acceptance: verify the standalone release APK on an isolated emulator, and report physical-device gaps explicitly.
 - Changes to flows must pass `bun run typecheck`, relevant `bun test tests`, and `bun run test:ui` after rebuilding static assets. Browser checks use Python Playwright through uv and a fixture Unix socket.
 - Verify mobile widths and reduced visual viewport height. Real device keyboard and OS background behavior require separate verification; do not describe desktop emulation as device testing.
+- Android builds use `bun run build:android`; signing credentials stay outside the repository and are reused for upgrades. `MOBILE_HERDR_ANDROID_SERIAL=emulator-... bun run test:android` installs and clears the app only on a dedicated emulator and owns its Unix socket / provider fixture. Never use a personal phone for destructive automated checks.

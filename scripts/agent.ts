@@ -1,3 +1,4 @@
+import { daemonHasThread } from '../server/native/codex-daemon';
 import { spawn } from 'node:child_process';
 import { mkdir, lstat, readFile, writeFile, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -18,6 +19,7 @@ mherdr status [--json]  查看当前 pane 的连接和控制权
 mherdr doctor [--json]  检查 CLI、Herdr 和启动锁
 mherdr doctor --clear-stale-lock  清理已退出启动器的锁
 mherdr stop         停止当前 pane 的原生 agent
+mherdr update       检查并安装最新发布版本
 
 手机点「在手机继续」，电脑按 Ctrl+] 接回。
 恢复旧会话：mherdr codex resume <完整 ID> / mherdr pi --session <完整 ID 或路径>。`;
@@ -120,9 +122,10 @@ async function registered(ctx: Context): Promise<NativeRecord | undefined> {
 }
 
 async function startCodex(ctx: Context, options: CodexOptions, command: string): Promise<NativeRecord> {
+  const shared = options.resumeId && await daemonHasThread(command, options.serverArgs, process.env, options.resumeId, resolve(import.meta.dir, 'codex-proxy.ts')).catch(() => false);
   const child = spawn(process.execPath, ['run', resolve(import.meta.dir, 'native-host.ts')], {
     detached: true, stdio: 'ignore',
-    env: { ...process.env, MOBILE_HERDR_CODEX_BINARY: command, MOBILE_HERDR_CODEX_SERVER_ARGS: JSON.stringify(options.serverArgs),
+    env: { ...process.env, ...(shared ? { MOBILE_HERDR_CODEX_TRANSPORT: 'proxy' } : {}), MOBILE_HERDR_CODEX_BINARY: command, MOBILE_HERDR_CODEX_SERVER_ARGS: JSON.stringify(options.serverArgs),
       MOBILE_HERDR_NATIVE_DIRECTORY: ctx.directory, MOBILE_HERDR_NATIVE_IDENTITY: JSON.stringify(ctx.identity) },
   });
   child.unref();
@@ -168,7 +171,7 @@ async function attachCodex(ctx: Context, record: NativeRecord, args: string[], o
   const endpoint = record.endpoint;
   await nativeCall(endpoint, { method: 'attach' });
   const remote = `unix://${proxy}`;
-  const launchArgs = state.conversationId ? ['resume', state.conversationId, '--remote', remote, ...reattachArgs] : ['--remote', remote, ...args];
+  const launchArgs = state.conversationId ? ['resume', state.conversationId, '--remote', remote, ...reattachArgs] : ['--remote', remote, ...args.filter(arg => arg !== '--no-daemon')];
   console.log('已启用手机接管。在手机选择当前 pane；电脑按 Ctrl+] 随时接回。退出终端界面不会停止后台 Codex。');
   const terminal = new Bun.Terminal({ cols: process.stdout.columns || 80, rows: process.stdout.rows || 24, data(_terminal, bytes) { process.stdout.write(bytes); } });
   let owner = 'desktop';
@@ -192,6 +195,7 @@ async function attachCodex(ctx: Context, record: NativeRecord, args: string[], o
 
 async function main(): Promise<void> {
   const [provider, ...args] = process.argv.slice(2).filter((arg, index) => !(index === 0 && arg === '--'));
+  if (provider === 'update') { const child = Bun.spawn([process.execPath, 'run', resolve(import.meta.dir, 'update.ts'), ...args], { stdin: 'inherit', stdout: 'inherit', stderr: 'inherit' }); process.exitCode = await child.exited; return; }
   if (!provider || ['--help', '-h', 'help'].includes(provider)) { console.log(HELP); return; }
   if (provider === '--version' || provider === '-V') { console.log(version); return; }
   if (['doctor', 'status', 'stop'].includes(provider)) {

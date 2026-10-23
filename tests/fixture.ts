@@ -51,7 +51,7 @@ export async function createFixture() {
       let error: unknown;
       const pane = snapshot.panes.find(pane => pane.pane_id === (params.pane_id ?? params.target));
       if (method === 'session.snapshot') result = { type: 'session_snapshot', snapshot };
-      else if (method === 'pane.process_info') result = { process_info: { foreground_processes: [{ pid: foregroundPid }] } };
+      else if (method === 'pane.process_info') result = { process_info: { foreground_processes: [{ pid: foregroundPid, argv: ['pi'] }] } };
       else if (method === 'pane.read') result = { type: 'pane_read', read: { text: screen, revision: 1, truncated: false } };
       else if (method === 'agent.prompt') {
         if (pane?.agent_status === 'blocked') error = { code: 'agent_blocked', message: 'Agent is waiting for an approval.' };
@@ -60,6 +60,7 @@ export async function createFixture() {
           result = { type: 'agent_prompt_submitted', submitted: true };
         }
       } else if (method === 'pane.send_keys') result = { type: 'pane_keys_sent' };
+      else if (method === 'agent.send_keys') { if (pane) pane.agent_status = 'idle'; result = { type: 'agent_keys_sent' }; }
       else error = { code: 'unknown_method', message: method };
       socket.write(JSON.stringify({ id: request.id, ...(error ? { error } : { result }) }) + '\n');
     });

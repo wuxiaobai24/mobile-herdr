@@ -1,8 +1,12 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { rpc } from '../../server/rpc';
+import type { Snapshot } from '../../shared/protocol';
 import { NativeController, type NativeIdentity } from '../../server/native/controller';
 import { BridgeError } from '../../server/rpc';
 import { PiDialogs } from '../../server/native/pi-dialogs';
 import { reportToHerdr } from '../../server/native/herdr-reporting';
-import { isDesktopReclaim } from '../../shared/terminal-keys';
+import { isDesktopReclaim, isTerminalReply } from '../../shared/terminal-keys';
 
 // Structural API typing keeps the extension usable with Pi's bundled distribution.
 type PiContext = {
@@ -21,7 +25,12 @@ type PiAPI = {
   setModel(model: any): Promise<boolean>;
 };
 
-export default function mobileHerdr(pi: PiAPI): void {
+const factoriesKey = Symbol.for('mobile-herdr.pi.factories');
+const shared = globalThis as typeof globalThis & { [factoriesKey]?: WeakSet<object> };
+const activeFactories = shared[factoriesKey] ??= new WeakSet<object>();
+export default function mobileHerdr(pi: PiAPI, options: { directory?: string } = {}): void {
+  if (activeFactories.has(pi)) return;
+  activeFactories.add(pi);
   let control: NativeController | undefined;
   let context: PiContext | undefined;
   let dialogs: PiDialogs | undefined;
@@ -46,9 +55,17 @@ export default function mobileHerdr(pi: PiAPI): void {
   }
   pi.on('session_start', async (_event, ctx) => {
     context = ctx;
-    const directory = process.env.MOBILE_HERDR_NATIVE_DIRECTORY;
-    const identity = JSON.parse(process.env.MOBILE_HERDR_NATIVE_IDENTITY ?? '{}') as NativeIdentity;
-    if (!directory || !identity.terminalId) return;
+    const directory = options.directory ?? process.env.MOBILE_HERDR_NATIVE_DIRECTORY ?? join(process.env.MOBILE_HERDR_STATE ?? join(homedir(), '.local/state/mobile-herdr'), 'native');
+    let identity = JSON.parse(process.env.MOBILE_HERDR_NATIVE_IDENTITY ?? '{}') as NativeIdentity;
+    if (!identity.terminalId) {
+      const herdrSocket = process.env.HERDR_SOCKET_PATH ?? process.env.HERDR_SOCKET;
+      const paneId = process.env.HERDR_PANE_ID;
+      if (!herdrSocket || !paneId) return;
+      const { snapshot } = await rpc<{ snapshot: Snapshot }>(herdrSocket, 'session.snapshot');
+      const pane = snapshot.panes.find(row => row.pane_id === paneId);
+      if (!pane || pane.agent && pane.agent !== 'pi') return;
+      identity = { herdrSocket, paneId, terminalId: pane.terminal_id };
+    }
     control = new NativeController(directory, identity, 'pi');
     const current = control;
     current.onShutdown = () => context?.shutdown();
@@ -60,7 +77,7 @@ export default function mobileHerdr(pi: PiAPI): void {
     current.beforeClaim = () => dialogs?.beforeClaim();
     removeTerminalInput = ctx.ui.onTerminalInput?.((data: string) => {
       if (isDesktopReclaim(data)) { current.desktop(); return { consume: true }; }
-      if (current.state.owner === 'desktop' || /^\u001b\[[\d;?]*[Rcn]$/.test(data)) return;
+      if (current.state.owner === 'desktop' || isTerminalReply(data)) return;
       return { consume: true };
     });
     current.state.capabilities.approvals = true;
@@ -110,5 +127,5 @@ export default function mobileHerdr(pi: PiAPI): void {
   async function desktop(ctx: PiContext): Promise<void> { control?.desktop(); ctx.ui.notify('已接回电脑。'); }
   pi.registerShortcut('ctrl+]', { description: '接回电脑控制', handler: desktop });
   pi.registerCommand('desktop', { description: '接回电脑控制', handler: async (_args, ctx) => desktop(ctx) });
-  pi.on('session_shutdown', async () => { removeTerminalInput?.(); dialogs?.close(); dialogs = undefined; await stopReporting?.(); const previous = control; control = undefined; await previous?.close(); });
+  pi.on('session_shutdown', async () => { activeFactories.delete(pi); removeTerminalInput?.(); dialogs?.close(); dialogs = undefined; await stopReporting?.(); const previous = control; control = undefined; await previous?.close(); });
 }

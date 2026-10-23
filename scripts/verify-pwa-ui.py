@@ -1,0 +1,53 @@
+import json, os
+from pathlib import Path
+from playwright.sync_api import sync_playwright, expect
+checks=[]
+def check(name, value=True):
+    assert value, name
+    checks.append(name)
+with sync_playwright() as p:
+    browser=p.chromium.launch(executable_path='/usr/bin/chromium', headless=True, args=['--no-sandbox'])
+    context=browser.new_context(viewport={'width':393,'height':674},is_mobile=True,has_touch=True)
+    page=context.new_page(); errors=[]
+    page.on('pageerror',lambda e:errors.append(str(e)))
+    page.goto(os.environ['MOBILE_HERDR_TEST_URL'])
+    page.get_by_label('连接密钥',exact=True).fill(os.environ['MOBILE_HERDR_TEST_TOKEN'])
+    page.get_by_label('连接开发机',exact=True).click()
+    editor=page.get_by_label('发给原会话的消息',exact=True)
+    editor.fill('离线保存，不自动发送')
+    page.wait_for_function("() => Object.values(localStorage).includes('离线保存，不自动发送')")
+    page.evaluate('navigator.serviceWorker.ready')
+    page.wait_for_function('() => navigator.serviceWorker.controller !== null')
+    manifest=page.evaluate("async () => (await fetch('/manifest.webmanifest')).json()")
+    check('manifest defines a stable standalone application',manifest['id']=='/' and manifest['scope']=='/' and manifest['display']=='standalone')
+    for icon in manifest['icons']:
+        dimensions=page.evaluate("async src => { const blob=await (await fetch(src)).blob(); const bitmap=await createImageBitmap(blob); return `${bitmap.width}x${bitmap.height}`; }",icon['src'])
+        check('decodable icon '+icon['src'],dimensions==icon['sizes'])
+    page.get_by_label('更多会话操作',exact=True).click();page.get_by_label('安装到手机',exact=True).click()
+    expect(page.get_by_text('Android：打开浏览器菜单，选择「安装应用」或「添加到主屏幕」。',exact=True)).to_be_visible()
+    page.get_by_label('关闭安装说明',exact=True).click()
+    check('manual OS installation instructions are reachable')
+    cached=page.evaluate('async () => {const keys=await caches.keys();return (await Promise.all(keys.map(async k=>(await (await caches.open(k)).keys()).map(r=>r.url)))).flat()}')
+    check('first visit precaches the built JS and CSS',any('/assets/' in u and u.endswith('.js') for u in cached) and any('/assets/' in u and u.endswith('.css') for u in cached))
+    check('API responses and credentials never enter application caches',not any('/api/' in u or os.environ['MOBILE_HERDR_TEST_TOKEN'] in u for u in cached))
+    context.set_offline(True);page.reload(wait_until='domcontentloaded')
+    expect(page.get_by_role('tab',name='对话',exact=True)).to_be_visible()
+    expect(page.get_by_label('重新连接开发机',exact=True)).to_be_visible()
+    check('offline reload opens the application shell and preserves its local draft',page.evaluate("Object.values(localStorage).includes('离线保存，不自动发送')"))
+    page.screenshot(path='artifacts/pwa-ui/offline.png')
+    context.set_offline(False)
+    expect(page.get_by_label('发送消息',exact=True)).to_be_enabled(timeout=15000)
+    expect(editor).to_have_value('离线保存，不自动发送')
+    check('reconnect restores the original draft without submitting it')
+    page.evaluate("window.__installRequested=0;const event=new Event('beforeinstallprompt');event.prompt=async()=>window.__installRequested++;event.userChoice=Promise.resolve({outcome:'accepted'});window.dispatchEvent(event)")
+    page.get_by_label('更多会话操作',exact=True).click();page.get_by_label('安装到手机',exact=True).click()
+    page.get_by_label('安装应用',exact=True).click()
+    check('browser-provided installation prompt is invoked only on user action',page.evaluate('window.__installRequested')==1)
+    page.evaluate("window.dispatchEvent(new Event('appinstalled'))")
+    page.get_by_label('更多会话操作',exact=True).click()
+    expect(page.get_by_label('安装到手机',exact=True)).not_to_be_visible()
+    check('installation completion removes the install action')
+    check('no uncaught errors',not errors)
+    context.close();browser.close()
+Path('artifacts/pwa-ui/verification.json').write_text(json.dumps({'checks':checks,'errors':errors},ensure_ascii=False,indent=2))
+print(f'PWA browser verification: {len(checks)} checks passed; {len(errors)} errors.')

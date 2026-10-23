@@ -43,6 +43,7 @@ try {
   const entries = listing.stdout.split('\n').filter(Boolean).map(path => path.split('/').slice(1).join('/'));
   check('archive has no credentials, transcripts, source workspace or installed dependencies', entries.every(path =>
     !/(^|\/)(\.git|\.env[^/]*|token|artifacts)(\/|$)|\.jsonl$|\.sock$/.test(path) && !path.startsWith('node_modules/')));
+  check('update and takeover runtime entries accompany deployment instructions', ['scripts/update.ts', 'scripts/takeover-launch.ts', 'scripts/codex-proxy.ts', 'install.sh', 'deployment.md'].every(path => entries.includes(path)));
   check('runtime needs no dependency installation', !JSON.parse(await readFile(join(installation, 'package.json'), 'utf8')).dependencies);
   check('third-party notices accompany bundled dependencies', entries.some(path => path.startsWith('licenses/react/')) && entries.some(path => path.startsWith('licenses/qrcode-terminal/')));
   check('theme attribution and MIT licenses accompany the runtime', entries.includes('licenses/themes/catppuccin.txt') && entries.includes('licenses/themes/flexoki.txt') && (await readFile(join(installation, 'THEME_CREDITS.md'), 'utf8')).includes('licenses/themes/'));

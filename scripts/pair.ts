@@ -12,7 +12,7 @@ if (position < 0 || !args[position + 1]) {
 const config = await loadConfig();
 const url = normalizeUrl(args[position + 1]);
 const fragment = Buffer.from(JSON.stringify({ version: 1, url, name: config.name, token: config.token })).toString('base64url');
-const link = `${url}/#connect=${fragment}`;
+const link = args.includes('--android') ? `mobile-herdr://pair#connect=${fragment}` : `${url}/#connect=${fragment}`;
 qrcode.generate(link, { small: true });
 console.log('用手机扫描，确认连接即可。该链接包含连接密钥，请仅在自己的设备上打开。');
 console.log(link);

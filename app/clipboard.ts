@@ -1,1 +1,2 @@
-export async function copyText(_value: string): Promise<void> { throw new Error('请长按选择文字复制。'); }
+import { setStringAsync } from 'expo-clipboard';
+export async function copyText(value: string): Promise<void> { await setStringAsync(value); }

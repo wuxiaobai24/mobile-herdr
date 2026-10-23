@@ -8,4 +8,4 @@ function fitViewport(): void {
 }
 fitViewport(); window.visualViewport?.addEventListener('resize', fitViewport); window.addEventListener('resize', fitViewport);
 createRoot(document.getElementById('root')!).render(<App />);
-if ('serviceWorker' in navigator && import.meta.env.PROD) void navigator.serviceWorker.register('/sw.js').catch(() => {});
+if ('serviceWorker' in navigator && import.meta.env.PROD) void navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch(() => {});

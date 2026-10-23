@@ -92,3 +92,5 @@ test('CLI help/version do not require or contact Herdr and cannot create a backg
     expect(await stat(join(directory, 'native')).catch(() => null)).toBe(null);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test('a dedicated shared Codex backend does not pass no-daemon to its remote TUI', () => { expect(codexOptions(['--no-daemon']).reattachArgs).toEqual([]); });

@@ -22,6 +22,7 @@ process.stdin.on('data', chunk => {
     if (['thread/start', 'thread/resume'].includes(frame.method)) result = { thread: frame.params?.ephemeral ? { ...thread, id: 'title-helper', ephemeral: true } : thread, model: 'fixture-model' };
     if (frame.method === 'thread/turns/list') result = { data: thread.turns, nextCursor: null };
     if (frame.method === 'model/list') result = { data: [{ id: 'fixture-model', model: 'fixture-model' }] };
+    if (frame.method === 'config/read' && frame.params?.largeFixture) result = { content: 'x'.repeat(17 * 1024 * 1024) };
     if (frame.method === 'turn/start' || frame.method === 'turn/steer') {
       if (frame.method === 'turn/start') { turn++; event('turn/started', { turn: { id: `turn-${turn}`, status: 'inProgress' } }); }
       const text = frame.params.input[0].text;
