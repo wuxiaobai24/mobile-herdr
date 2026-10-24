@@ -21,9 +21,14 @@ process.stdin.on('data', chunk => {
     if (frame.method === 'initialize') result = { userAgent: 'isolated-codex-fixture', platformFamily: 'unix', platformOs: 'linux' };
     if (['thread/start', 'thread/resume'].includes(frame.method)) result = { thread: frame.params?.ephemeral ? { ...thread, id: 'title-helper', ephemeral: true } : thread, model: 'fixture-model' };
     if (frame.method === 'thread/turns/list') result = { data: thread.turns, nextCursor: null };
-    if (frame.method === 'model/list') result = { data: [{ id: 'fixture-model', model: 'fixture-model' }] };
+    if (frame.method === 'model/list') result = { data: [
+      { id: 'fixture-model', model: 'fixture-model', displayName: 'Fixture Model', defaultReasoningEffort: 'medium', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'medium' }, { reasoningEffort: 'high' }] },
+      { id: 'fixture-fast', model: 'fixture-fast', displayName: 'Fixture Fast', supportedReasoningEfforts: [] },
+    ] };
+    if (frame.method === 'thread/compact/start') event('fixture/compacted', {});
     if (frame.method === 'config/read' && frame.params?.largeFixture) result = { content: 'x'.repeat(17 * 1024 * 1024) };
     if (frame.method === 'turn/start' || frame.method === 'turn/steer') {
+      event('fixture/turnOptions', { model: frame.params.model, effort: frame.params.effort, collaborationMode: frame.params.collaborationMode });
       if (frame.method === 'turn/start') { turn++; event('turn/started', { turn: { id: `turn-${turn}`, status: 'inProgress' } }); }
       const text = frame.params.input[0].text;
       event('item/completed', { item: { id: 'user-' + frame.id, type: 'userMessage', content: [{ type: 'text', text }] } });
@@ -46,6 +51,10 @@ process.stdin.on('data', chunk => {
       result = { turn: { id: `turn-${turn}` }, turnId: `turn-${turn}` };
     }
     if (frame.method === 'turn/interrupt') { event('turn/completed', { turn: { id: `turn-${turn}`, status: 'interrupted' } }); }
+    if (frame.method === 'review/start') {
+      event('fixture/reviewOptions', frame.params);
+      result = { reviewThreadId: thread.id, turn: { id: 'review-owned' } };
+    }
     send({ id: frame.id, result });
   }
 });

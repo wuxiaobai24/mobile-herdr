@@ -1,6 +1,6 @@
 import type { TakeoverState } from '../../shared/takeover';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { ArrowLeftRight, ChevronDown, Monitor, Smartphone, X } from 'lucide-react-native';
 import type { NativeState } from '../../shared/native';
 import type { NativeControl } from '../useNativeControl';
@@ -61,7 +61,6 @@ export function NativeSession({ state, control, provider, online, compact, hideB
           <Text style={styles.muted}>刷新、断线和关闭手机页面都不会停止 agent。切换时不复制对话，也不启动第二个 agent。</Text>
           {!!state.error && <Text selectable style={{ color: colors.amber, fontSize: 14, lineHeight: 22 }}>{state.error}</Text>}
           <Text selectable style={{ color: colors.muted, fontFamily: mono, fontSize: 12, lineHeight: 20 }}>{state.provider} · {state.conversationId ?? '等待电脑打开对话'}{'\n'}运行实例 {state.runtimeId}</Text>
-          {state.capabilities.models && control.owns && <ModelOption state={state} control={control} onError={onError} />}
           {state.provider === 'pi' && <Text style={styles.muted}>Pi 标准确认框和问题可直接在对话中处理。其他扩展的自定义终端界面需交还电脑处理。</Text>}
         </> : <>
           <Text style={styles.text}>接入当前 {provider === 'pi' ? 'Pi' : 'Codex'} 会话，将输入权切到手机。</Text>
@@ -75,16 +74,4 @@ export function NativeSession({ state, control, provider, online, compact, hideB
       </ScrollView>
     </View></View></Modal>
   </>;
-}
-function ModelOption({ state, control, onError }: { state: NativeState; control: NativeControl; onError: (text: string) => void }): React.JSX.Element {
-  const { colors, styles } = useTheme();
-  const [model, setModel] = useState(state.model ?? '');
-  const [busy, setBusy] = useState(false);
-  async function save(): Promise<void> {
-    setBusy(true); try { await control.act('model', { model }); } catch (error) { onError(error instanceof Error ? error.message : '切换失败。'); } finally { setBusy(false); }
-  }
-  const choices = state.models?.filter(row => !model || row.id.toLowerCase().includes(model.toLowerCase()) || row.name.toLowerCase().includes(model.toLowerCase())) ?? [];
-  return <View style={{ gap: 8 }}><Text style={styles.text}>{state.provider === 'codex' ? '下次手机任务使用的模型' : '当前会话模型'}</Text><TextInput accessibilityLabel="原生模型 ID" value={model} onChangeText={setModel} autoCapitalize="none" style={[styles.field, { fontSize: 16 }]} placeholder="搜索可用模型" placeholderTextColor={colors.muted} />
-    {choices.slice(0, 12).map(row => <Pressable key={row.id} accessibilityRole="button" accessibilityLabel={`选择模型 ${row.name}`} onPress={() => setModel(row.id)} style={{ paddingVertical: 10, borderBottomWidth: 1, borderColor: colors.line }}><Text style={{ color: model === row.id ? colors.accent : colors.text, fontSize: 14 }}>{row.name}</Text><Text style={styles.muted}>{row.id}</Text></Pressable>)}
-    <Pressable accessibilityRole="button" disabled={busy || state.status !== 'idle'} onPress={save} style={[styles.button, styles.secondary]}><Text style={styles.text}>{busy ? '正在切换…' : '应用模型'}</Text></Pressable></View>;
 }

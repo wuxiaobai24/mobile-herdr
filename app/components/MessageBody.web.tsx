@@ -1,10 +1,10 @@
-import { Children, isValidElement } from 'react';
+import { memo, Children, isValidElement } from 'react';
 import { DiffView } from './DiffView';
 import { suppliedChanges } from '../../shared/diff';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-export default function MessageBody({ text }: { text: string }): React.JSX.Element {
+export default memo(function MessageBody({ text }: { text: string }): React.JSX.Element {
   return <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={{
     pre: ({ children }) => {
       const code = Children.toArray(children)[0];
@@ -17,4 +17,4 @@ export default function MessageBody({ text }: { text: string }): React.JSX.Eleme
     a: ({ children, href }) => <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>,
     img: ({ alt }) => <span>{alt ? `[图片：${alt}]` : '[图片]'}</span>,
   }}>{text}</ReactMarkdown></div>;
-}
+});

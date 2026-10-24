@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { memo, useMemo, useState, type ReactNode } from 'react';
 import { Linking, Pressable, ScrollView, Text, View } from 'react-native';
 import { Copy, Check } from 'lucide-react-native';
 import type { Definition, Nodes, RootContent } from 'mdast';
@@ -19,7 +19,7 @@ function CodeBlock({ value, language }: { value: string; language?: string | nul
   </View>;
 }
 
-export default function MessageBody({ text }: { text: string }): React.JSX.Element {
+export default memo(function MessageBody({ text }: { text: string }): React.JSX.Element {
   const { colors, styles, appearance } = useTheme();
   const tree = useMemo(() => parseMarkdown(text), [text]);
   const [error, setError] = useState('');
@@ -66,4 +66,4 @@ export default function MessageBody({ text }: { text: string }): React.JSX.Eleme
     });
   }
   return <View style={{ gap: 12 }}>{blocks(tree.children)}{!!error && <Text style={{ color: colors.amber }}>{error}</Text>}</View>;
-}
+});

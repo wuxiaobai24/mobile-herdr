@@ -38,9 +38,10 @@ live('installed Codex: native phone turn and official TUI share the same app-ser
     expect(thread).toBeTruthy();
     let sequence = 0;
     async function act(action: NativeAction['action'], values = {}) { return control.dispatch({ action, runtimeId: control.state.runtimeId, clientId: 'test-phone', epoch: control.state.epoch, requestId: 'real-codex-' + ++sequence, ...values }); }
-    await act('claim'); await act('prompt', { text: 'Return the confirmation text only.' });
+    await act('claim'); await act('mode', { mode: 'plan' }); await act('prompt', { text: 'Return the confirmation text only.' });
     await until(() => control.state.status === 'idle' && control.state.messages.some(row => row.text === '本地隔离验证成功'));
     expect(model.requests).toBeGreaterThan(0);
+    expect(control.state.mode).toBe('plan');
     await act('release');
     terminal.write('\u001b[200~Continue with the same confirmation.\u001b[201~');
     await Bun.sleep(150); terminal.write('\r');
@@ -57,9 +58,10 @@ live('installed Pi: same process forwards extension approvals and questions, the
   const directory = await mkdtemp(join(tmpdir(), 'mh-pi-'));
   const home = join(directory, 'home'); const native = join(directory, 'native'); const model = localModel();
   await mkdir(home);
-  await writeFile(join(home, 'models.json'), JSON.stringify({ providers: { fixture: { baseUrl: model.url, api: 'openai-completions', apiKey: 'fixture', models: [{ id: 'fixture-model', contextWindow: 32000, maxTokens: 1024 }] } } }));
+  await writeFile(join(home, 'models.json'), JSON.stringify({ providers: { fixture: { baseUrl: model.url, api: 'openai-completions', apiKey: 'fixture', models: [{ id: 'fixture-model', reasoning: true, contextWindow: 32000, maxTokens: 1024 }] } } }));
   const questions = join(directory, 'questions.ts');
-  await writeFile(questions, `export default function(pi) { pi.on('before_agent_start', async (_event, ctx) => { if (!await ctx.ui.confirm('本次工具确认', '这是隔离测试')) throw Error('declined'); const answer=await ctx.ui.select('选择主题', ['深色','浅色']); if(answer!=='深色') throw Error('unexpected answer'); }); }`);
+  const commandMarker = join(directory, 'slash-command.txt');
+  await writeFile(questions, `import {writeFile} from 'node:fs/promises'; export default function(pi) { pi.registerCommand('fixture-command', {description:'Owned slash command',handler:async(args)=>{await writeFile(${JSON.stringify(commandMarker)},args);}}); pi.on('before_agent_start', async (_event, ctx) => { if (!await ctx.ui.confirm('本次工具确认', '这是隔离测试')) throw Error('declined'); const answer=await ctx.ui.select('选择主题', ['深色','浅色']); if(answer!=='深色') throw Error('unexpected answer'); }); }`);
   const child = Bun.spawn([process.env.MOBILE_HERDR_PI_BINARY ?? 'pi', '--mode', 'rpc', '--no-extensions', '--no-mcp', '--no-context-files', '--no-skills', '--no-prompt-templates', '--no-themes', '--extension', resolve('plugins/pi/mobile-herdr.ts'), '--extension', questions, '--model', 'fixture/fixture-model', '--session-dir', join(directory, 'sessions')], {
     cwd: directory, env: { ...process.env, PI_CODING_AGENT_DIR: home, MOBILE_HERDR_NATIVE_DIRECTORY: native, MOBILE_HERDR_NATIVE_IDENTITY: JSON.stringify({ herdrSocket: join(directory, 'herdr.sock'), paneId: 'test:p1', terminalId: 'owned-test' }) }, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe',
   });
@@ -71,7 +73,15 @@ live('installed Pi: same process forwards extension approvals and questions, the
     async function state(): Promise<NativeState> { return nativeCall(record.endpoint, { method: 'state' }); }
     let sequence = 0;
     async function act(action: NativeAction['action'], values = {}) { const current = await state(); return nativeCall(record.endpoint, { method: 'action', input: { action, runtimeId: current.runtimeId, clientId: 'test-phone', epoch: current.epoch, requestId: 'real-pi-' + ++sequence, ...values } }); }
-    const before = await state(); await act('claim'); await act('prompt', { text: 'Return the confirmation text only.' });
+    const before = await state(); await act('claim');
+    expect(before.commands?.some(command => command.name === 'fixture-command')).toBe(true);
+    expect(before.capabilities.reasoning).toBe(true);
+    await act('command', { text: '/fixture-command slash 中文' });
+    await until(async () => await readFile(commandMarker, 'utf8').catch(() => '') === 'slash 中文');
+    expect(model.requests).toBe(0);
+    await act('reasoning', { reasoningEffort: 'high' });
+    expect((await state()).reasoningEffort).toBe('high');
+    await act('prompt', { text: 'Return the confirmation text only.' });
     await until(async () => (await state()).requests[0]?.kind === 'approval');
     await act('reply', { request: (await state()).requests[0].id, decision: 'accept' });
     await until(async () => (await state()).requests[0]?.kind === 'question');

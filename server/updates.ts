@@ -8,7 +8,7 @@ import { version } from '../package.json';
 
 const REPOSITORY = 'wuxiaobai24/mobile-herdr';
 export interface Release { version: string; tag: string }
-export interface UpdateState { id?: string; phase: 'idle' | 'installing' | 'restarting' | 'ready' | 'failed'; message: string; current: string; latest?: string; available: boolean; supported: boolean }
+export interface UpdateState { id?: string; phase: 'idle' | 'installing' | 'restarting' | 'ready' | 'failed'; message: string; current: string; latest?: string; available: boolean; supported: boolean; startedAt?: number }
 function alive(pid: number): boolean { try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code !== 'ESRCH'; } }
 const VERSION = /^(\d+)\.(\d+)\.(\d+)(?:-([a-zA-Z0-9.-]+))?$/;
 export function compareVersions(a: string, b: string): number {
@@ -34,37 +34,47 @@ export function selectRelease(rows: any[], current = version): Release | undefin
   }).map(row => ({ version: row.tag_name.replace(/^v/, ''), tag: row.tag_name }));
   return releases.sort((a, b) => compareVersions(b.version, a.version))[0];
 }
-let catalog: { at: number; promise: Promise<Release> } | undefined;
-export function latestRelease(): Promise<Release> {
-  if (catalog && Date.now() - catalog.at < 60000) return catalog.promise;
+let catalog: { at: number; channel: boolean; promise: Promise<Release> } | undefined;
+export function latestRelease(current = version): Promise<Release> {
+  const channel = current.includes('-');
+  if (catalog && catalog.channel === channel && Date.now() - catalog.at < 60000) return catalog.promise;
   const promise = (async () => {
     const response = await fetch(`https://api.github.com/repos/${REPOSITORY}/releases?per_page=100`, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Mobile-Herdr-Updater' }, signal: AbortSignal.timeout(12000), redirect: 'error' });
     if (!response.ok) throw new Error(`无法检查 GitHub release（${response.status}），请稍后重试。`);
     const rows = await response.json();
     if (!Array.isArray(rows)) throw new Error('Release 响应无效。');
-    const release = selectRelease(rows);
+    const release = selectRelease(rows, current);
     if (!release) throw new Error('没有找到完整的发布包与校验文件。');
     return release;
   })();
-  catalog = { at: Date.now(), promise }; void promise.catch(() => { if (catalog?.promise === promise) catalog = undefined; }); return promise;
+  catalog = { at: Date.now(), channel, promise }; return promise;
 }
 async function managed(stateDir: string): Promise<ManagedRecord | undefined> {
   const path = join(stateDir, 'bridge.json'), info = await lstat(path).catch(() => undefined);
   if (!info?.isFile() || info.mode & 0o077 || info.uid !== process.getuid?.()) return;
   return readFile(path, 'utf8').then(JSON.parse).catch(() => undefined);
 }
-export async function updateStatus(stateDir: string): Promise<UpdateState> {
+export async function updateStatus(stateDir: string, dependencies: { latest?: (current: string) => Promise<Release> } = {}): Promise<UpdateState> {
   const saved = await readFile(join(stateDir, 'update.json'), 'utf8').then(JSON.parse).catch(() => null) as UpdateState | null;
   const record = await managed(stateDir);
-  const supported = !!record && !!record.restart;
-  const latest = await latestRelease().catch(error => { if (saved && ['installing', 'restarting'].includes(saved.phase)) return undefined; throw error; });
-  const available = !!latest && compareVersions(latest.version, version) > 0;
-  if (saved && ['installing', 'restarting'].includes(saved.phase)) {
+  const runtime = record && await managedRequest(record, 'status').catch(() => undefined);
+  const current = runtime?.running && runtime.version ? runtime.version : version;
+  const supported = !!runtime?.running && !!record?.restart;
+  const active = saved && ['installing', 'restarting'].includes(saved.phase);
+  const latest = await (dependencies.latest ?? latestRelease)(current).catch(error => { if (active) return undefined; throw error; });
+  const available = !!latest && compareVersions(latest.version, current) > 0;
+  const base = { current, supported, latest: latest?.version ?? saved?.latest, available };
+  if (active) {
     const worker = await readFile(join(stateDir, 'update-worker.json'), 'utf8').then(JSON.parse).catch(() => null);
-    if (worker?.id === saved.id && Number.isInteger(worker.pid) && !alive(worker.pid)) return { ...saved, phase: 'failed', message: '上次更新进程已中断。请检查当前版本后重试。', current: version, supported, latest: latest?.version ?? saved.latest, available };
+    const missing = worker?.id !== saved.id || !Number.isInteger(worker.pid);
+    if (missing ? Date.now() - (saved.startedAt ?? 0) > 10000 : !alive(worker.pid)) {
+      return { ...saved, ...base, phase: 'failed', message: '上次更新进程已中断。请检查当前版本后重试。' };
+    }
+    return { ...saved, ...base };
   }
-  if (saved && ['installing', 'restarting', 'failed'].includes(saved.phase)) return { ...saved, current: version, supported, latest: latest?.version ?? saved.latest, available };
-  return { phase: saved?.phase === 'ready' ? 'ready' : 'idle', message: available ? '有新版本可用。' : '当前已是最新版本。', current: version, latest: latest?.version, available, supported };
+  if (saved?.phase === 'failed' && available && saved.latest === latest?.version) return { ...saved, ...base };
+  const ready = saved?.phase === 'ready' && !available && saved.latest === current;
+  return { ...base, phase: ready ? 'ready' : 'idle', message: available ? '有新版本可用。' : '当前已是最新版本。' };
 }
 async function save(stateDir: string, state: UpdateState): Promise<void> {
   const path = join(stateDir, 'update.json'), temporary = path + '.' + process.pid;
@@ -81,7 +91,7 @@ async function startUpdateOnce(root: string, stateDir: string, expectedPid: numb
   if (!record || record.pid !== expectedPid || !record.restart || !(await managedRequest(record, 'status')).running) throw new Error('当前 bridge 未由服务命令管理。请先用 mobile-herdr background 启动，才能在页面内更新。');
   const state = await updateStatus(stateDir);
   if (['installing', 'restarting'].includes(state.phase) || !state.available) return state;
-  const result: UpdateState = { ...state, id: randomUUID(), phase: 'installing', message: '正在下载并校验最新版本…' };
+  const result: UpdateState = { ...state, id: randomUUID(), phase: 'installing', startedAt: Date.now(), message: '正在下载并校验最新版本…' };
   // Serialize starts before detaching; the updater also owns an installation lock.
   await save(stateDir, result);
   const child = spawn(process.execPath, ['run', join(root, 'scripts/update.ts'), '--background', result.id!, String(expectedPid)], { detached: true, stdio: 'ignore', env: { ...process.env, MOBILE_HERDR_STATE: stateDir } });
@@ -117,8 +127,10 @@ export async function performUpdate(root: string, stateDir: string, id: string, 
     if (state.id !== id || state.phase !== 'installing') throw new Error('更新任务身份已变化。');
     previous = await managed(stateDir);
     if (!previous || previous.pid !== expectedPid || !previous.restart || !(await managedRequest(previous, 'status')).running) throw new Error('原 bridge 身份已变化，更新已停止。');
-    const latest = await (dependencies.latest ?? latestRelease)();
-    if (latest.version !== state.latest || compareVersions(latest.version, version) <= 0) throw new Error('发布版本发生变化，请重新检查更新。');
+    const runtime = await managedRequest(previous, 'status');
+    if (runtime.version !== state.current) throw new Error('运行版本已变化，请重新检查更新。');
+    const latest = await (dependencies.latest ?? (() => latestRelease(state.current)))();
+    if (latest.version !== state.latest || compareVersions(latest.version, runtime.version!) <= 0) throw new Error('发布版本发生变化，请重新检查更新。');
     const env: NodeJS.ProcessEnv = { ...process.env, ...previous.restart, MOBILE_HERDR_BUN: process.execPath };
     delete env.MOBILE_HERDR_MANAGED_NONCE; delete env.MOBILE_HERDR_CONTROL_DIR;
     await (dependencies.run ?? run)(['bash', join(root, 'install.sh'), '--version', latest.version, '--prefix', prefix, '--bin-dir', binDir, '--no-install-bun'], env);

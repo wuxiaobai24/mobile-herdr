@@ -14,15 +14,20 @@ type PiContext = {
   shutdown: () => void;
   sessionManager: { getSessionId(): string; getBranch(): any[] };
   modelRegistry: { getAvailable(): any[] };
+  compact?: (options?: { onComplete?: () => void; onError?: (error: Error) => void }) => void;
+  getContextUsage?: () => { tokens?: number; contextWindow: number } | undefined;
   ui: { setStatus(key: string, text?: string): void; notify(text: string, type?: string): void; [key: string]: any };
 };
 type PiAPI = {
   on(event: string, handler: (event: any, ctx: PiContext) => any): void;
   registerShortcut(key: string, options: { description: string; handler: (ctx: PiContext) => Promise<void> }): void;
   registerCommand(name: string, options: { description: string; handler: (args: string, ctx: PiContext) => Promise<void> }): void;
-  sendUserMessage(text: string, options?: { deliverAs: 'steer' | 'followUp' }): void;
+  sendUserMessage(text: string, options?: { deliverAs?: 'steer' | 'followUp'; expandPromptTemplates?: boolean }): void;
   getAllTools(): any[];
   setModel(model: any): Promise<boolean>;
+  getCommands?: () => { name: string; description?: string }[];
+  getThinkingLevel?: () => string;
+  setThinkingLevel?: (level: string) => void;
 };
 
 const factoriesKey = Symbol.for('mobile-herdr.pi.factories');
@@ -37,6 +42,26 @@ export default function mobileHerdr(pi: PiAPI, options: { directory?: string } =
   let removeTerminalInput: (() => void) | undefined;
   let stopReporting: (() => Promise<void>) | undefined;
   let sequence = 0;
+  let supportedThinkingLevels: ((model: any) => string[]) | undefined;
+  let compacting = false;
+  function syncOptions(ctx: PiContext): void {
+    if (!control) return;
+    control.state.model = ctx.model ? `${(ctx.model as any).provider}/${ctx.model.id}` : undefined;
+    control.state.models = ctx.modelRegistry.getAvailable().slice(0, 100).map(row => ({
+      id: `${row.provider}/${row.id}`, name: row.name ?? row.id,
+      reasoningEfforts: supportedThinkingLevels?.(row).map(id => ({ id, name: id })),
+    }));
+    control.state.reasoningEffort = pi.getThinkingLevel?.();
+    control.state.capabilities.reasoning = !!supportedThinkingLevels && !!pi.setThinkingLevel && !!pi.getThinkingLevel;
+    control.state.capabilities.compact = !!ctx.compact;
+    control.state.commands = (pi.getCommands?.() ?? [])
+      .filter(row => /^[\w:.-]{1,120}$/.test(row.name) && !['new', 'resume', 'fork', 'tree', 'reload', 'exit', 'quit'].includes(row.name))
+      .slice(0, 200).map(row => ({ name: row.name, description: row.description?.slice(0, 200) ?? '' }));
+    control.state.capabilities.commands = !!pi.getCommands;
+    const usage = ctx.getContextUsage?.();
+    control.state.context = usage?.tokens !== undefined && usage.contextWindow > 0 ? { tokens: usage.tokens, window: usage.contextWindow } : undefined;
+    control.changed();
+  }
   const messageIds = new WeakMap<object, string>();
   function message(message: any, fallback?: string): void {
     if (!control || !message || !['user', 'assistant', 'toolResult'].includes(message.role)) return;
@@ -55,6 +80,13 @@ export default function mobileHerdr(pi: PiAPI, options: { directory?: string } =
   }
   pi.on('session_start', async (_event, ctx) => {
     context = ctx;
+    // Resolve through Pi's bundled API; older distributions retain their other controls.
+    for (const name of ['@earendil-works/pi-ai/compat', '@mariozechner/pi-ai']) {
+      try {
+        const api = await import(name);
+        if (typeof api.getSupportedThinkingLevels === 'function') { supportedThinkingLevels = api.getSupportedThinkingLevels; break; }
+      } catch { /* Reasoning choices remain unavailable without model capability metadata. */ }
+    }
     const directory = options.directory ?? process.env.MOBILE_HERDR_NATIVE_DIRECTORY ?? join(process.env.MOBILE_HERDR_STATE ?? join(homedir(), '.local/state/mobile-herdr'), 'native');
     let identity = JSON.parse(process.env.MOBILE_HERDR_NATIVE_IDENTITY ?? '{}') as NativeIdentity;
     if (!identity.terminalId) {
@@ -70,8 +102,7 @@ export default function mobileHerdr(pi: PiAPI, options: { directory?: string } =
     const current = control;
     current.onShutdown = () => context?.shutdown();
     current.state.conversationId = ctx.sessionManager.getSessionId();
-    current.state.model = ctx.model ? `${(ctx.model as any).provider}/${ctx.model.id}` : undefined;
-    current.state.models = ctx.modelRegistry.getAvailable().slice(0, 100).map(row => ({ id: `${row.provider}/${row.id}`, name: row.name ?? row.id }));
+    syncOptions(ctx);
     for (const entry of ctx.sessionManager.getBranch()) if (entry.type === 'message') message(entry.message, entry.id);
     dialogs = new PiDialogs(current, () => context?.isIdle() ?? true); dialogs.wrap(ctx.ui);
     current.beforeClaim = () => dialogs?.beforeClaim();
@@ -88,17 +119,44 @@ export default function mobileHerdr(pi: PiAPI, options: { directory?: string } =
     current.perform = async input => {
       if (!context) throw new BridgeError('native_not_ready', 'Pi 尚未就绪。', 409);
       if (input.action === 'prompt') {
+        if (compacting) throw new BridgeError('agent_working', '正在压缩上下文，请稍后发送。', 409);
         if (!input.text?.trim() || input.text.length > 32000) throw new BridgeError('invalid_input', '消息为空或过长。', 400);
         pi.sendUserMessage(input.text, context.isIdle() ? undefined : { deliverAs: 'steer' });
         return { ok: true, receipt: input.requestId };
       }
       if (input.action === 'stop') { context.abort(); dialogs?.cancel(); return { ok: true }; }
       if (input.action === 'reply') { dialogs!.reply(input); return { ok: true }; }
-      if (input.action === 'model') {
+      if (input.action === 'model' || input.action === 'reasoning') {
         if (!context.isIdle()) throw new BridgeError('agent_working', '请在任务结束后切换模型。', 409);
+        if (input.action === 'reasoning') {
+          const levels = context.model && supportedThinkingLevels?.(context.model);
+          if (!input.reasoningEffort || !levels?.includes(input.reasoningEffort) || !pi.setThinkingLevel) throw new BridgeError('invalid_input', '当前模型不支持此思考强度。', 400);
+          pi.setThinkingLevel(input.reasoningEffort); syncOptions(context);
+          return { ok: true, model: current.state.model, reasoningEffort: current.state.reasoningEffort };
+        }
         const model = context.modelRegistry.getAvailable().find(row => `${row.provider}/${row.id}` === input.model);
         if (!model || !(await pi.setModel(model))) throw new BridgeError('invalid_input', '当前账号未提供此模型。', 400);
-        return { ok: true };
+        syncOptions(context);
+        return { ok: true, model: current.state.model, reasoningEffort: current.state.reasoningEffort };
+      }
+      if (input.action === 'command') {
+        if (!context.isIdle()) throw new BridgeError('agent_working', '请先停止当前任务，再执行命令。', 409);
+        syncOptions(context);
+        const name = input.text?.match(/^\/([\w:.-]+)(?:\s|$)/)?.[1];
+        if (!input.text || input.text.length > 32000 || !current.state.commands?.some(command => command.name === name)) throw new BridgeError('unsupported_action', '当前会话未提供此命令，请在终端查看。', 400);
+        pi.sendUserMessage(input.text, { expandPromptTemplates: true });
+        return { ok: true, receipt: input.requestId };
+      }
+      if (input.action === 'compact') {
+        if (!context.isIdle() || compacting) throw new BridgeError('agent_working', '请在任务结束后压缩上下文。', 409);
+        if (!context.compact) throw new BridgeError('unsupported_action', '当前 Pi 未提供上下文压缩。', 400);
+        compacting = true; current.state.status = 'working'; current.state.capabilities.steer = false; current.changed();
+        function finish(error?: Error): void {
+          compacting = false; current.state.status = 'idle'; current.state.capabilities.steer = true;
+          current.state.error = error?.message; current.changed();
+        }
+        context.compact({ onComplete: () => finish(), onError: finish });
+        return { ok: true, receipt: input.requestId };
       }
       throw new BridgeError('unsupported_action', '此 Pi 操作需要原始终端。', 409);
     };
@@ -122,8 +180,9 @@ export default function mobileHerdr(pi: PiAPI, options: { directory?: string } =
     if (previous) control?.message({ ...previous, output: event.partialResult?.content?.filter((row: any) => row.type === 'text').map((row: any) => row.text).join('\n') });
   });
   pi.on('agent_start', (_event, ctx) => { context = ctx; if (control) { control.state.status = 'working'; control.changed(); } });
-  pi.on('agent_settled', (_event, ctx) => { context = ctx; if (control) { control.state.status = 'idle'; control.changed(); } });
-  pi.on('model_select', (event, ctx) => { context = ctx; if (control) { control.state.model = `${event.model.provider}/${event.model.id}`; control.changed(); } });
+  pi.on('agent_settled', (_event, ctx) => { context = ctx; if (control) { control.state.status = 'idle'; syncOptions(ctx); } });
+  pi.on('model_select', (_event, ctx) => { context = ctx; syncOptions(ctx); });
+  pi.on('thinking_level_select', (_event, ctx) => { context = ctx; syncOptions(ctx); });
   async function desktop(ctx: PiContext): Promise<void> { control?.desktop(); ctx.ui.notify('已接回电脑。'); }
   pi.registerShortcut('ctrl+]', { description: '接回电脑控制', handler: desktop });
   pi.registerCommand('desktop', { description: '接回电脑控制', handler: async (_args, ctx) => desktop(ctx) });

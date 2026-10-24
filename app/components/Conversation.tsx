@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ComponentRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
 import { ChevronDown, ChevronRight, Code2, Link2, MessageSquare, TerminalSquare } from 'lucide-react-native';
 import type { ChatMessage, Conversation as ConversationData, Machine, Pane, HistoryPage } from '../../shared/protocol';
@@ -8,6 +8,7 @@ import { ConversationTools } from './ConversationTools';
 import MessageBody from './MessageBody';
 import { DiffView } from './DiffView';
 import { suppliedChanges } from '../../shared/diff';
+import { MessageActions } from './MessageActions';
 
 interface Reading { y: number; near: boolean; older: ChatMessage[]; cursor?: string; hasMore?: boolean }
 const readingMemory = new Map<string, Reading>();
@@ -77,7 +78,8 @@ export function Conversation({ chat, machine, session, pane, online, native, foo
     scroll.current?.scrollTo({ y: pending.y, animated: false }); y.current = pending.y; latestReading.current.y = pending.y; pendingRestore.current = undefined;
   }
   useEffect(() => { if (pendingRestore.current) { const frame = requestAnimationFrame(restorePosition); return () => cancelAnimationFrame(frame); } }, [older, readingKey]);
-  const messages = [...new Map([...(olderKey === readingKey ? older : []), ...(chat?.messages ?? [])].map(row => [row.id, row])).values()];
+  const messages = useMemo(() => [...new Map([...(olderKey === readingKey ? older : []), ...(chat?.messages ?? [])].map(row => [row.id, row])).values()], [olderKey, readingKey, older, chat?.messages]);
+  const messageGroups = useMemo(() => groups(messages), [messages]);
   async function loadOlder(): Promise<void> {
     if (loading || !online) return;
     setLoading(true); nearBottom.current = false;
@@ -161,8 +163,8 @@ export function Conversation({ chat, machine, session, pane, online, native, foo
     {chat && chat.source !== 'unavailable' && <>
       {(!native || chat.truncated) && <View style={[styles.row, { justifyContent: 'center', gap: 7, marginBottom: 24 }]}><Link2 size={12} color={colors.dim} /><Text style={[styles.muted, { fontSize: 12 }]}>{chat.truncated ? '显示最近的对话' : '已连接原生聊天记录'} · {chat.source}</Text></View>}
       {chat.messages.length === 0 && <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 28, gap: 12 }}><MessageSquare size={28} color={colors.accent} /><Text style={{ color: colors.text, fontSize: 20, fontWeight: '600' }}>接着电脑上的任务</Text></View>}
-      {groups(messages).map(group => group[0].role === 'tool' ? <ToolGroup key={group[0].id} messages={group} target={target} register={register} onTargetLayout={onTargetLayout} /> : <View key={group[0].id} ref={view => register(group[0].id, view)} onLayout={() => onTargetLayout(group[0].id)} collapsable={false} nativeID={`chat-message-${encodeURIComponent(group[0].id)}`} style={{ backgroundColor: target === group[0].id ? colors.accentSurface : 'transparent', borderRadius: 8, marginVertical: 14, alignItems: group[0].role === 'user' ? 'flex-end' : 'stretch' }}>
-        {group[0].role === 'user' ? <View style={{ backgroundColor: colors.hover, borderRadius: 18, borderTopRightRadius: 5, paddingHorizontal: 16, paddingVertical: 13, maxWidth: '92%' }}><Text selectable style={[styles.text, { fontSize: appearance.readingSize, lineHeight: Math.round(appearance.readingSize * 1.65) }]}>{group[0].text}</Text></View> : <View style={{ gap: 12 }}><Text style={{ fontSize: 13, color: colors.muted, fontWeight: '600' }}>{pane.agent === 'codex' ? 'Codex' : pane.agent === 'claude' ? 'Claude Code' : pane.agent === 'pi' ? 'Pi' : pane.agent}</Text><MessageBody text={group[0].text} />{group[0].truncated && <Text style={styles.muted}>内容较长，当前仅展示部分结果；完整内容请在电脑查看。</Text>}</View>}
+      {messageGroups.map(group => group[0].role === 'tool' ? <ToolGroup key={group[0].id} messages={group} target={target} register={register} onTargetLayout={onTargetLayout} /> : <View key={group[0].id} ref={view => register(group[0].id, view)} onLayout={() => onTargetLayout(group[0].id)} collapsable={false} nativeID={`chat-message-${encodeURIComponent(group[0].id)}`} style={{ backgroundColor: target === group[0].id ? colors.accentSurface : 'transparent', borderRadius: 8, marginVertical: 14, alignItems: group[0].role === 'user' ? 'flex-end' : 'stretch' }}>
+        {group[0].role === 'user' ? <View style={{ backgroundColor: colors.hover, borderRadius: 18, borderTopRightRadius: 5, paddingHorizontal: 16, paddingVertical: 13, maxWidth: '92%' }}><Text selectable style={[styles.text, { fontSize: appearance.readingSize, lineHeight: Math.round(appearance.readingSize * 1.65) }]}>{group[0].text}</Text></View> : <View style={{ gap: 8 }}><View style={[styles.row, { justifyContent: 'space-between', gap: 8 }]}><Text style={{ fontSize: 13, color: colors.muted, fontWeight: '600' }}>{pane.agent === 'codex' ? 'Codex' : pane.agent === 'claude' ? 'Claude Code' : pane.agent === 'pi' ? 'Pi' : pane.agent}</Text><MessageActions text={group[0].text} /></View><MessageBody text={group[0].text} />{group[0].truncated && <Text style={styles.muted}>内容较长，当前仅展示部分结果；完整内容请在电脑查看。</Text>}</View>}
       </View>)}
       {width >= 900 && pane.agent_status === 'working' && <View style={[styles.row, { gap: 10, paddingTop: 18 }]}><ActivityIndicator size="small" color={colors.accent} /><Text style={styles.muted}>Agent 正在工作…</Text></View>}
     </>}

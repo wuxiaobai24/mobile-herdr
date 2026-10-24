@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Pressable, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { useTheme } from '../theme';
-import { copyText } from '../clipboard';
+import { copyText, readText } from '../clipboard';
 import { useNetworkOnline } from '../useNetworkOnline';
 import type { Machine } from '../../shared/protocol';
 
@@ -36,6 +36,11 @@ export default function Terminal({ machine, session, pane, active = true }: { ma
         try {
           const message = JSON.parse(event.nativeEvent.data);
           if (message.type === 'terminal-ready') connect();
+          if (message.type === 'read-clipboard' && typeof message.requestId === 'string') {
+            const requestId = message.requestId;
+            void readText().then(text => inject({ type: 'clipboard-text', requestId, text: text.slice(0, 32000) }))
+              .catch(() => inject({ type: 'clipboard-text', requestId }));
+          }
           if (message.type === 'copy' && typeof message.text === 'string' && message.text.length <= 200000) {
             void copyText(message.text).then(() => inject({ type: 'clipboard-result', ok: true })).catch(() => inject({ type: 'clipboard-result', ok: false }));
           }

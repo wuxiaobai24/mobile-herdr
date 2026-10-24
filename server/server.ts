@@ -1,3 +1,4 @@
+import { projectFiles } from './files';
 import { startUpdate, updateStatus } from './updates';
 import { Takeovers } from './native/takeover';
 import { join, resolve, sep } from 'node:path';
@@ -89,6 +90,11 @@ export function createBridge(config: BridgeConfig, options: { remotes?: RemoteGa
       headers.set('access-control-allow-headers', 'Authorization, Content-Type, X-Request-ID, X-Herdr-Machine');
       headers.set('access-control-allow-methods', 'GET, POST, OPTIONS');
     }
+    if (value instanceof Response) {
+      for (const key of ['content-type', 'content-length', 'content-disposition']) { const header = value.headers.get(key); if (header) headers.set(key, header); }
+      headers.set('access-control-expose-headers', 'Content-Disposition, Content-Length');
+      return new Response(value.body, { status: value.status, headers });
+    }
     return Response.json(value, { status, headers });
   }
   function fail(error: unknown): { code: string; message: string } {
@@ -143,8 +149,8 @@ export function createBridge(config: BridgeConfig, options: { remotes?: RemoteGa
               for (const key of ['content-type', 'x-request-id']) { const value = request.headers.get(key); if (value) headers.set(key, value); }
               try {
                 const result = await fetch(endpoint.url + url.pathname + url.search, { method: request.method, headers,
-                  body: ['GET', 'HEAD'].includes(request.method) ? undefined : await request.clone().text(), signal: AbortSignal.timeout(20000), redirect: 'error' });
-                return { status: result.status, value: await result.json() };
+                  body: ['GET', 'HEAD'].includes(request.method) ? undefined : await request.clone().text(), signal: AbortSignal.timeout(url.searchParams.get('mode') === 'download' ? 120000 : 20000), redirect: 'error' });
+                return { status: result.status, value: result.ok && url.pathname.endsWith('/files') && url.searchParams.get('mode') === 'download' ? result : await result.json() };
               } catch { throw new BridgeError('ssh_delivery_unknown', request.method === 'POST' ? 'SSH 连接中断，操作可能已经送达。草稿已保留；请检查原会话后再决定是否重发。' : 'SSH 连接已断开，正在重连。', 502); }
             }
             const result = request.method === 'POST' ? await mutate(request, forward) as { status: number; value: unknown } : await forward();
@@ -178,11 +184,12 @@ export function createBridge(config: BridgeConfig, options: { remotes?: RemoteGa
           }
           const socket = await resolveSession(config, url.searchParams.get('session') ?? 'default');
           if (request.method === 'GET' && url.pathname === '/api/snapshot') return response(request, await snapshot(socket));
-          const match = url.pathname.match(/^\/api\/panes\/([^/]+)\/(chat|history|screen|bind|prompt|keys|interrupt|launch|native|takeover)$/);
+          const match = url.pathname.match(/^\/api\/panes\/([^/]+)\/(chat|history|screen|bind|prompt|keys|interrupt|launch|native|takeover|files)$/);
           if (!match) throw new BridgeError('not_found', '接口不存在。', 404);
           const id = decodeURIComponent(match[1]);
           const pane = await getPane(socket, id);
           const action = match[2];
+          if (request.method === 'GET' && action === 'files') return response(request, await projectFiles(pane, url.searchParams));
           if (request.method === 'GET' && action === 'takeover') return response(request, takeovers.get(socket, pane));
           if (request.method === 'GET' && action === 'native') return response(request, await nativeState(socket, pane) ?? null);
           if (request.method === 'GET' && action === 'chat') { const native = await nativeState(socket, pane); return response(request, native ? nativeChat(native) : await transcripts.read(socket, pane)); }
@@ -357,7 +364,11 @@ export function createBridge(config: BridgeConfig, options: { remotes?: RemoteGa
                   if (ws.getBufferedAmount() > 1024 * 1024) ws.close(1013, 'slow_client');
                   else { ws.send(frame); previousSnapshot = snapshotJson; previousChat = chatJson; previousNative = nativeJson; }
                 }
-              } catch (error) { if (!ws.data.closed) ws.send(JSON.stringify({ type: 'error', error: fail(error) })); }
+              } catch (error) {
+                // Recovery must send a fresh state even when its contents did not change.
+                previousSnapshot = ''; previousChat = ''; previousNative = ''; snapshotAt = 0;
+                if (!ws.data.closed) ws.send(JSON.stringify({ type: 'error', error: fail(error) }));
+              }
               finally { running = false; }
             }
             void tick();

@@ -174,3 +174,32 @@ PWA检查包含图标解码与尺寸、首次完整预缓存、API与凭证不�
 已将此项目原先直接启动的Web bridge以相同地址与凭证迁至受管理服务（7331），只向已核验的原Web进程发送SIGTERM；启动后验证原密钥有效、接管API可用及managed诊断标记。没有停止Herdr或用户agent，也没有向用户pane发送命令。当前mherdr启动器指向本工作区代码。
 
 提交前再次通过类型检查、47项单测（6项环境跳过、320个断言）和重建后的149项Web检查。使用原签名重新构建包含最新共享界面的release APK，并在本轮启动的专用 `emulator-5580` 上通过19项Android检查；测试仅使用隔离fixture，结束后关闭该模拟器。日志为 `artifacts/ui/prepush.log`、`artifacts/android/build-prepush.log` 和 `artifacts/android/native-prepush.log`。APK、日志、签名文件均不入库；实体手机边界不变。本次只推送源码，不创建GitHub release或版本标签。
+
+
+## 手机终端、slash 与会话控制优化（2026-10-23）
+
+- 对照本地 HerdTerm 和固定提交的 Paseo / OpenChamber 源码，梳理结果与功能边界见 [体验对齐分析](mobile-experience-alignment.md)。常驻工具采用图标，空输入框保持54px；模型和思考强度集中到点选面板，工作中保持停止操作。新增 slash 候选、长草稿编辑、回复复制，以及按 provider 能力提供的模型 / 强度 / 压缩 / 计划模式 / 原对话审查和 Pi 命令。
+- `bun run typecheck` 与 `git diff --check` 通过。Pi 插件新增纳入 TypeScript 检查。完整 opt-in：`MOBILE_HERDR_LIVE=1 MOBILE_HERDR_NATIVE_LIVE=1 MOBILE_HERDR_SSH_LIVE=1 bun test tests`，**61通过、0跳过、0失败，411次断言**。本轮原生检查明确使用本机 Codex 0.162.1 与 Pi 1.2.0 的固定可执行文件，模型请求仅发到测试本地协议服务。
+- 新增读取测试验证密集约4MiB记录的最新一页只读取64KiB；反向扩展复用已读字节，总范围最多8MiB。覆盖UTF-8字节游标、207条无丢失分页、工具结果、大消息截断、超大JSONL记录、半条记录和空文件。WebSocket临时错误后即使内容未变也会重新发送状态，恢复不产生写入。
+- 原生控制测试检查模型和强度真实进入同一个 `turn/start`，计划模式使用结构化设置；任务中拒绝配置修改、失效epoch拒绝写入、上下文压缩按请求ID去重，审查明确使用同一thread和inline delivery。真实Pi通过扩展注册测试slash命令，确认原进程执行、未变成模型提示词，并验证实际思考强度切换。停止操作的claim和stop沿用可重试的请求ID。
+- 重建静态资源后，主Agent连续三轮 `bun run test:ui`：**180/180、180/180、180/180**，每轮0未捕获异常。每轮包含32兼容、20原生、14 SSH、25外观 / 终端、23阅读、23手机布局、12 PWA和31新增控制检查。新增检查覆盖slash、模型 / 强度、未知命令保留、失败显式重试、全屏同份草稿、刷新 / 存储失败、停止、回复复制、搜索空态、一次性Ctrl / Alt、方向面板拖动不写入、bracketed paste、输入权失去后保留预览且恢复不重放。
+- 320×568、390×450、844×390及360px模拟键盘视口均检查控件与横向溢出。393×674主会话可阅读550px，320×568为444px，390×450为326px；空输入框均54px。新增全屏编辑也检查短视口发送操作。浏览器检查等待弹层动画完成，不以过渡中的位置判断稳定布局。
+- 复用仓库外原签名构建release APK，`apksigner verify`通过；专用 **emulator-5582 / Android 15** 上 `bun run test:android` **25项通过**。新增原生模型 / 强度点选、slash计划模式、全屏草稿与系统返回；实际WebView方向键和显式剪贴板粘贴到达本次测试拥有的VT peer，读取剪贴板只进入预览。测试期间重启应用、同签名覆盖安装、网络恢复和输入权核对均通过。完成后关闭本轮创建的模拟器。
+- `bun scripts/verify-terminal-live.ts` 另通过真实独立Herdr session的浏览器xterm键盘与Enter输入验证；不将Android的VT fixture描述为真实Android到Herdr PTY验收。`bun run test:release` **32项通过（Linux x64）**，包含预构建运行包、原生组件、安装与管理回归；没有发布新的GitHub release或版本标签。
+- 按oil-ui进行一轮独立存量界面评审，不打分；未发现所见静态阻断。采纳删除强度重复英文和查找重复提示的建议。主Agent复看修改后的Web截图，以及Android全屏编辑、方向面板和粘贴预览。精确动效时长与实体手机reduced-motion未据此认定通过。
+- 证据：`artifacts/optimization-tests.log`、`artifacts/optimization/web-final-1.log`至`web-final-3.log`、`artifacts/optimization/android-build.log`、`android-test.log`、`terminal-live.log`、`release-test.log`；截图 / 视频在`artifacts/controls-ui/`、`artifacts/mobile-layout/`及`artifacts/android/ui/`。独立评审为`artifacts/optimization/visual-review.md`。APK与SHA-256在`artifacts/android/`，均不入版本控制。
+
+限制：实体手机中文输入法组合输入、扫码、厂商省电、长时间锁屏 / Doze与其他Android版本仍未验收。旧的已运行原生组件按自身能力显示选项，未自动替换或重启。附件、文件提及、显式follow-up队列和完整Git / PR工作流尚未对齐。所有写入、PTY、模型、SSH、安装与清理仅作用于测试创建的环境，没有重启、升级或终止用户原有Herdr、agent或bridge。
+
+## 文件浏览与更新修复（2026-10-24）
+
+- 入口与边界见 [项目文件与更新修复](files-and-updates.md)。文件浏览覆盖所选本机 / SSH 的 pane 项目目录、筛选、原文 / 代码与图片预览、二进制下载，未增加编辑、删除或上传。沿用紧凑全屏工具页与图标操作，长列表使用 FlatList 按需渲染。
+- 现场只读诊断确认实际运行 beta.6、工作区源码 beta.7，更新 worker 把后者误当运行版本。回归测试现覆盖这种混合版本下成功切换、失败回滚、旧 ready / failed 状态、新版本与丢失 worker。页面提交错误与轮询错误分开；网络结果不明确时不自动重发，用户主动重试沿用同一个请求 ID。
+- `bun run typecheck`、`git diff --check`、`bun install --frozen-lockfile` 通过。完整 opt-in `bun test tests` **66通过、0跳过、0失败，455次断言**，使用固定 Codex / Pi 二进制及隔离模型协议服务。文件接口覆盖UTF-8截断、中文文件名、精确二进制、根目录变化、路径越界、外部链接、FIFO、100MB上限、无凭证拒绝，以及SSH流式响应与错误传播。
+- 重建静态资源后，主Agent连续三轮 `bun run test:ui` **207/207、207/207、207/207**，均无未捕获异常；包括原有180项与新增27项文件 / 更新流程。新增检查覆盖目录 / 原文 / 图片 / 二进制、中文下载名与字节、读取失败和重试、slash入口、320×568 / 390×450 / 844×390、更新检查失败、投递不明确时不自动提交及同ID重试、重复点击限制和完成刷新。之后修正测试PNG的CRC，再单独通过相同27项检查；PNG实际解码也单独在Android核对像素。
+- `bun run build:android` 复用仓库外原签名，apksigner检查通过；专用 **emulator-5582 / Android 15** 的签名独立APK完整回归 **31项通过**。新增检查保存后通过adb读取真实目标文件，与原始UTF-8字节比较；覆盖中文名与空格、系统另存为、取消回原预览、图片解码后的实际RGB像素，以及Bridge更新与APK入口的区分。测试发现并修复了SDK原生URI返回值与预编译AAR绕过补丁的问题，已固定依赖补丁并只对此模块强制源码编译。写入使用文件描述符按64KB分块，清理私有缓存。
+- Android UI检查还修正WebView无障碍虚拟节点的选择方式、系统保存按钮随键盘移动时的点击等待，以及截图等待Modal布局稳定。`MOBILE_HERDR_ANDROID_FILES_ONLY=1` 可运行文件专项，不能替代完整Chat与系统生命周期验收；`MOBILE_HERDR_ANDROID_OUTPUT` 可将专项截图与报告保存在独立目录。
+- `bun run test:release` **32项通过（Linux x64）**，产物为本地运行包。独立静态视觉评审一轮 **8/10**，所见窄屏与短视口没有布局阻断；动效与交互仍以实际流程记录为证，不以评分宣称通过。已压缩更新说明，未新增常驻文字入口，复用图标与现有主题。
+- 日志在 `artifacts/files-update/`：`tests.log`、`web-final-1.log` 至 `web-final-3.log`、`android-build.log`、`android-test.log`、`release-test.log`；27项专项截图、录屏和报告在 `ui/`，独立评审为 `visual-review.md`。完整Android报告31项在 `artifacts/android/ui/verification.json`，补拍的稳定文件 / 更新截图在 `artifacts/files-update/android-ui/`。APK与SHA-256在 `artifacts/android/`，运行包在 `artifacts/releases/`。
+
+没有创建新的公开release或标签；当前用户Bridge仍是原PID与beta.6，没有重启、升级或终止用户Herdr / agent / Bridge。检查与写入仅作用于测试创建的session / Unix socket / provider、临时文件与专用模拟器。实体手机中文输入法、扫码、厂商省电、长时间后台 / Doze及其他系统版本仍需分别验证。

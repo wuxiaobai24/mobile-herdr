@@ -1,0 +1,20 @@
+import { mkdir } from 'node:fs/promises';
+import { createNativeFixture } from '../tests/native-fixture';
+
+const fixture = await createNativeFixture();
+fixture.control.readHistory = undefined;
+for (let i = 0; i < 180; i++) fixture.control.message({ id: `controls-${i}`, role: i % 2 ? 'assistant' : 'user', text: `阅读消息 ${i} · 同一个会话` });
+const inspector = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch() {
+  return Response.json({ model: fixture.control.state.model, effort: fixture.control.state.reasoningEffort,
+    owner: fixture.control.state.owner, status: fixture.control.state.status,
+    sent: fixture.control.state.messages.filter(row => row.role === 'user' && row.text === 'Controls native message').length,
+    slashPrompts: fixture.control.state.messages.filter(row => row.role === 'user' && row.text.startsWith('/')).length });
+} });
+await mkdir('artifacts/controls-ui', { recursive: true });
+try {
+  const child = Bun.spawn(['uv', 'run', '--python', '3.12', '--with', 'playwright==1.60.0', 'python', 'scripts/verify-controls-ui.py'], {
+    env: { ...process.env, MOBILE_HERDR_TEST_URL: fixture.url, MOBILE_HERDR_TEST_TOKEN: fixture.config.token,
+      MOBILE_HERDR_TEST_INSPECTOR: `http://127.0.0.1:${inspector.port}` }, stdout: 'inherit', stderr: 'inherit',
+  });
+  if (await child.exited !== 0) throw new Error('Mobile controls verification failed.');
+} finally { inspector.stop(true); await fixture.close(); }

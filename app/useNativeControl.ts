@@ -31,11 +31,11 @@ export function useNativeControl(machine: Machine | undefined, session: string, 
     }
     return result;
   }
-  async function interrupt(): Promise<unknown> {
-    if (owns) return act('stop');
-    const claimed = await act('claim') as { epoch: number };
+  async function interrupt(id = requestId()): Promise<unknown> {
+    if (owns) return act('stop', {}, id);
+    const claimed = await act('claim', {}, id + '_claim') as { epoch: number };
     if (!machine || !pane || !state || !Number.isInteger(claimed.epoch)) throw new Error('接管结果未确认，请检查当前会话。');
-    return api(machine, panePath(session, pane, 'native'), { id: requestId(), body: { action: 'stop', runtimeId: state.runtimeId, conversationId: state.conversationId, clientId, epoch: claimed.epoch } });
+    return api(machine, panePath(session, pane, 'native'), { id, body: { action: 'stop', runtimeId: state.runtimeId, conversationId: state.conversationId, clientId, epoch: claimed.epoch } });
   }
   return { clientId, owns, owner, act, interrupt };
 }

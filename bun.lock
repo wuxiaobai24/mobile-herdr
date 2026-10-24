@@ -11,6 +11,8 @@
         "expo-camera": "~58.0.12",
         "expo-clipboard": "~58.0.4",
         "expo-dev-client": "~58.0.14",
+        "expo-file-system": "~58.0.10",
+        "expo-intent-launcher": "~58.0.3",
         "expo-network": "~58.0.4",
         "expo-secure-store": "~58.0.2",
         "expo-sqlite": "~58.0.13",
@@ -45,6 +47,9 @@
         "vite": "^8.3.5",
       },
     },
+  },
+  "patchedDependencies": {
+    "expo-intent-launcher@58.0.3": "patches/expo-intent-launcher@58.0.3.patch",
   },
   "packages": {
     "2g": ["2g@1.0.1", "https://registry.npmmirror.com/2g/-/2g-1.0.1.tgz", { "peerDependencies": { "typescript": ">=5.8.0" }, "optionalPeers": ["typescript"], "bin": { "2g": "bin/cli.js" } }, "sha512-+uViadKOS/wwR4pFu5g8TPn3QHpKqoX19JHCnp8k/3cLpImdcXozwvZA6Q/5PeW3AcU8neL8faaMidBcv7o8CA=="],
@@ -598,6 +603,8 @@
     "expo-file-system": ["expo-file-system@58.0.10", "https://registry.npmmirror.com/expo-file-system/-/expo-file-system-58.0.10.tgz", { "peerDependencies": { "expo": "*", "react-native": "*" } }, "sha512-n0M7amp/Bv9TAqVfTWq1zGykmQJWiPzDePZIKp8YYKkVvY7N65bo96sMBQlHkhAyW4I1B6MZABnybliy5DXQig=="],
 
     "expo-font": ["expo-font@58.0.9", "https://registry.npmmirror.com/expo-font/-/expo-font-58.0.9.tgz", { "peerDependencies": { "expo": "*", "react": "*", "react-native": "*" } }, "sha512-C8sIeVA2NBb76xqqnQ6eVzfXezAfKJC4qVGU9ukKM4KXdLtkhH5bRCvRSc6qUFUmrcNoM3RjI78SEH3lhigRSg=="],
+
+    "expo-intent-launcher": ["expo-intent-launcher@58.0.3", "https://registry.npmmirror.com/expo-intent-launcher/-/expo-intent-launcher-58.0.3.tgz", { "peerDependencies": { "expo": "*" } }, "sha512-m+InwjvC5z9mAEqNhOmen5TkAFU6vqGdr+CSL9XSQmEpT1YfanJsHg9mc8P5g5mCepKk39If7v9vz8v9iekrsg=="],
 
     "expo-json-utils": ["expo-json-utils@58.0.1", "https://registry.npmmirror.com/expo-json-utils/-/expo-json-utils-58.0.1.tgz", {}, "sha512-jNHNElOUPz2/vW3CbDKRn6tTF6eE9wwVbh/Isnqp5c/CdTcONzFVR3YHN3WQ05PnkmieyEqVfeOusOd1X9FDtQ=="],
 

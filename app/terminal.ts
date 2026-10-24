@@ -3,6 +3,7 @@ import { copyText } from './clipboard.web';
 import { FitAddon } from '@xterm/addon-fit';
 import { applyTheme, getTheme, parseAppearance, defaultAppearance, type ThemeColors } from '../shared/themes';
 import { isTerminalReply } from '../shared/terminal-keys';
+import { createTerminalControls } from './terminal-controls';
 
 function terminalTheme(c: ThemeColors): ITheme {
   return { background: c.bg, foreground: c.text, cursor: c.accent, selectionBackground: c.accent + '55',
@@ -31,10 +32,15 @@ let connected = false, disposing = false, suspended = false, retryCount = 0;
 let inputWritable = true, controlMessage = '', lastFailure = '';
 function inputState(): void {
   keyboard.disabled = !connected || !inputWritable || !history.hidden;
-  document.querySelectorAll<HTMLButtonElement>('[data-key]').forEach(button => { button.disabled = keyboard.disabled; });
+  controls.setEnabled(!keyboard.disabled);
   if (connected) state.textContent = inputWritable ? '实时终端 · 点击输入，滑动查看历史' : controlMessage;
 }
 const nativeBridge = (window as Window & { ReactNativeWebView?: { postMessage: (message: string) => void } }).ReactNativeWebView;
+const controls = createTerminalControls({
+  input: data => { if (connected && inputWritable && history.hidden) socket?.send(JSON.stringify({ type: 'input', data })); },
+  paste: value => terminal.paste(value), focus: () => terminal.focus(), nativeBridge,
+});
+controls.setEnabled(false);
 let lastSeen = Date.now();
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -104,11 +110,12 @@ function hideHistory(): void {
 }
 async function showHistory(): Promise<void> {
   if (!credentials) return;
+  controls.hide();
   const wasOpen = !history.hidden;
   const oldTop = historyContent.scrollTop;
   history.hidden = false; surface.hidden = true; latest.hidden = true; toolbar.hidden = true; keys.hidden = true;
   terminal.blur(); keyboard.disabled = true;
-  document.querySelectorAll<HTMLButtonElement>('[data-key]').forEach(button => { button.disabled = true; });
+  controls.setEnabled(false);
   historyButton.setAttribute('aria-pressed', 'true'); historyNote.textContent = '读取历史…';
   historyRequest?.abort();
   const request = new AbortController(); historyRequest = request;
@@ -133,7 +140,7 @@ function start(reset = true): void {
   if (!credentials || disposing || suspended) return;
   clearTimeout(reconnectTimer); clearInterval(heartbeat); lastSeen = Date.now(); lastFailure = '';
   if (socket) { socket.onclose = null; socket.close(); }
-  connected = false; if (reset) { hideHistory(); terminal.reset(); } scrollState(); state.textContent = '连接原始终端…';
+  connected = false; inputState(); if (reset) { hideHistory(); terminal.reset(); } scrollState(); state.textContent = '连接原始终端…';
   socket = new WebSocket(location.origin.replace(/^http/, 'ws') + '/api/terminal');
   const active = socket;
   active.binaryType = 'arraybuffer';
@@ -157,7 +164,7 @@ function start(reset = true): void {
   active.onclose = event => {
     if (active !== socket) return;
     connected = false; clearInterval(heartbeat); keyboard.disabled = true;
-    document.querySelectorAll<HTMLButtonElement>('[data-key]').forEach(button => { button.disabled = true; });
+    controls.setEnabled(false);
     state.textContent = lastFailure || (event.code === 1008 ? '密钥无效，请重新配对' : '终端重连中 · 原会话继续运行');
     if (event.code !== 1008 && !disposing && navigator.onLine) reconnectTimer = setTimeout(() => start(false), Math.min(15000, 750 * 2 ** Math.min(retryCount++, 5)));
   };
@@ -168,12 +175,14 @@ function receive(event: MessageEvent): void {
   if (event.source && event.source !== window.parent && event.source !== window) return;
   let message;
   try { message = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch { return; }
+  if (!message || typeof message !== 'object') return;
+  controls.receive(message);
   if (message?.type === 'clipboard-result') { historyNote.textContent = message.ok ? '已复制到剪贴板' : '复制失败，请长按选择。'; return; }
   if (message?.type === 'suspend') {
     suspended = true; connected = false; clearTimeout(reconnectTimer); clearInterval(heartbeat); historyRequest?.abort();
     if (socket) { socket.onclose = null; socket.close(); socket = undefined; }
     terminal.blur(); keyboard.disabled = true;
-    document.querySelectorAll<HTMLButtonElement>('[data-key]').forEach(button => { button.disabled = true; });
+    controls.setEnabled(false);
     state.textContent = '连接已暂停 · 原会话继续运行'; return;
   }
   if (message?.type !== 'connect' || typeof message.token !== 'string' || typeof message.pane !== 'string' || typeof message.session !== 'string') return;
@@ -188,12 +197,17 @@ function receive(event: MessageEvent): void {
   const resumed = suspended; suspended = false;
   if (JSON.stringify(credentials) === JSON.stringify(next)) { if (resumed) start(false); return; }
   historyContent.textContent = ''; historyText = ''; queryField.value = '';
+  controls.reset();
   credentials = next; start();
 }
 window.addEventListener('message', receive);
 // Android WebView's message event uses document; injected scripts use window.
 document.addEventListener('message', receive as EventListener);
-terminal.onData(data => { if (connected && history.hidden && (inputWritable || isTerminalReply(data))) socket?.send(JSON.stringify({ type: 'input', data })); });
+terminal.onData(data => {
+  if (!connected || !history.hidden) return;
+  if (isTerminalReply(data)) socket?.send(JSON.stringify({ type: 'input', data }));
+  else if (inputWritable) socket?.send(JSON.stringify({ type: 'input', data: controls.consume(data) }));
+});
 
 // Browsing never sends wheel reports or arrow keys to the running program.
 // Full-screen applications use the alternate buffer, which has no local scrollback.
@@ -231,14 +245,6 @@ terminal.attachCustomKeyEventHandler(event => {
     event.preventDefault(); browse((event.key === 'PageUp' ? -1 : 1) * terminal.rows); return false;
   }
   return true;
-});
-document.querySelectorAll<HTMLButtonElement>('[data-key]').forEach(button => {
-  button.disabled = true;
-  button.onclick = () => {
-    if (!connected || !inputWritable || !history.hidden) return;
-    const key = JSON.parse('"' + button.dataset.key + '"');
-    socket?.send(JSON.stringify({ type: 'input', data: key })); terminal.focus();
-  };
 });
 historyButton.onclick = () => { if (history.hidden) void showHistory(); else hideHistory(); };
 document.getElementById('close-history')!.onclick = hideHistory;

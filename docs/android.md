@@ -34,7 +34,7 @@ bun run build:android
 
 凭证保存在 SecureStore；草稿、设置、发送回执和最近位置保存在应用私有 SQLite，按机器、session、pane 和对话身份隔离。旧原生起点使用 SecureStore 保存的草稿会按需迁移；长草稿不再被静默截断。应用禁用 Android Auto Backup；卸载后需重新配对。
 
-前台使用 HTTP Bearer 与 WebSocket 首帧鉴权，token 不进入 HTTP 查询或 WebSocket URL。HTTP 局域网连接沿用已有 bridge 能力；跨不可信网络请使用 HTTPS / VPN。终端 WebView 只允许选定 bridge 的终端页，跳转受限制，复制通过原生剪贴板完成。
+前台使用 HTTP Bearer 与 WebSocket 首帧鉴权，token 不进入 HTTP 查询或 WebSocket URL。HTTP 局域网连接沿用已有 bridge 能力；跨不可信网络请使用 HTTPS / VPN。终端 WebView 只允许选定 bridge 的终端页，跳转受限制，复制和粘贴读取通过原生剪贴板完成；读取先进入预览，显式确认后才写入终端。
 
 切到后台会暂停实时连接、保存草稿；回来后读取最新会话与输入权，再允许发送。开发机 agent 始终独立运行。断网或请求回执不明时保留草稿和 request ID，不自动重放写入。不提供后台常驻 WebSocket 或后台推送；通知需要单独设计服务端事件订阅和设备授权。
 
@@ -51,6 +51,8 @@ MOBILE_HERDR_ANDROID_SERIAL=emulator-5580 bun run test:android
 
 Android 检查会安装 APK、清空专用模拟器中的本应用数据、通过 adb reverse 访问测试创建的 bridge。Herdr API 使用隔离 Unix socket，Codex 使用本地协议替身；测试关闭时清理 fixture，不重启或写入用户已有 Herdr / agent。Python UI 自动化由 uv 提供，证据位于 `artifacts/android/ui/`。
 
+终端控件使用本次测试创建的 VT WebSocket peer，验证实际 WebView 的方向键、剪贴板预览和 bracketed paste；不将该 fixture 描述为真实 Herdr PTY。真实 PTY 路径另由隔离 Herdr 的浏览器检查验证。模型、思考强度、slash 和全屏草稿共用 Web 代码，并在独立 APK 中验证。
+
 模拟器检查不等于真机验收。发布给更多用户前还需验证实体 Android 的中文输入法、系统键盘/返回手势、扫码、锁屏、长时间后台与厂商省电策略。当前不交付 iOS 安装包。
 
 ## 当前验收记录
@@ -60,3 +62,8 @@ Android 检查会安装 APK、清空专用模拟器中的本应用数据、通�
 视觉方向沿用现有应用：同一套主题、阅读设置、页面结构、输入框、消息、审批和 Diff 卡片。新增扫码入口只出现在 Android 配对表单，交互沿用共享按钮和弹窗；弹窗的 slide / fade 和既有 Web 动效保持原有用途。本轮主 Agent 复看原生配对、键盘、审批、主题和终端截图，未做独立视觉评审。键盘避让与原生测量单独适配；搜索只执行一次定位，后续键盘 / 新消息布局不会把阅读位置拉回旧目标。
 
 终端 WebView 从选定 bridge 加载页面，因此终端原生复制和显式暂停需要包含本轮 `terminal.js` 适配的 bridge；不需要重启或迁移 Herdr / agent。
+
+
+本轮手机控制优化的最终验收：同签名release APK在专用`emulator-5582`上25项通过；Web三轮各180项通过，完整隔离测试61项通过、0跳过。覆盖新增slash、模型 / 强度、全屏编辑，以及真实WebView内的方向键和显式粘贴。模拟器已在测试完成后关闭，实体手机边界不变；详见[本轮验证记录](verification.md#手机终端slash-与会话控制优化2026-10-23)。
+
+项目文件下载使用系统 CREATE_DOCUMENT 保存位置选择器，再从私有缓存分块写入文档 URI；取消保存不会切换会话。依赖 `expo-file-system` 与 `expo-intent-launcher`。后者58.0.3的原生 URI 返回错误通过 `patches/expo-intent-launcher@58.0.3.patch` 固定，`bun install` 自动应用，package.json 的 Android autolinking 为此模块启用 buildFromSource；不要只复制 node_modules 中的修改。变更后须重建签名 release APK，并在专用模拟器核对目标文件的实际字节与取消返回，不能只看选择器关闭或打包成功。

@@ -84,3 +84,26 @@ test('diagnostic exports contain only allowlisted versions and status', async ()
     expect(JSON.parse(text).herdr).toMatchObject({ connected: true, protocol: 22 });
   } finally { await f.close(); }
 });
+
+test('watch recovers from a temporary read error without changed content or replaying writes', async () => {
+  const f = await createFixture();
+  const machine: Machine = { id: 'recovery', name: '', url: f.url, token: f.config.token };
+  const statuses: string[] = [];
+  const states: unknown[] = [];
+  let stop: (() => void) | undefined;
+  async function until(condition: () => boolean): Promise<void> {
+    for (let i = 0; i < 300 && !condition(); i++) await Bun.sleep(10);
+    expect(condition()).toBe(true);
+  }
+  try {
+    stop = watch(machine, 'default', 'w1:p1', state => states.push(state), status => statuses.push(status));
+    await until(() => statuses.at(-1) === 'live');
+    const first = states[0];
+    f.setSnapshotError(true);
+    await until(() => statuses.at(-1) === 'offline');
+    f.setSnapshotError(false);
+    await until(() => statuses.at(-1) === 'live' && states.length > 1);
+    expect(states.at(-1)).toEqual(first);
+    expect(f.calls.every(call => ['session.snapshot', 'pane.process_info'].includes(call.method))).toBe(true);
+  } finally { stop?.(); await f.close(); }
+});

@@ -71,3 +71,40 @@ test('native ownership rejects a second phone and conflicting receipt contents',
     expect((await nativeCall<NativeState>(join(f.directory, 'native', base.runtimeId + '.sock'), { method: 'state' })).owner).toBe('phone-first');
   } finally { await f.close(); }
 });
+
+test('model, reasoning and compaction stay fenced to the live thread and reach its provider', async () => {
+  const f = await createNativeFixture();
+  let sequence = 0;
+  function input(action: NativeAction['action'], values = {}): NativeAction {
+    return { action, runtimeId: f.control.state.runtimeId, conversationId: f.control.state.conversationId,
+      clientId: 'settings-phone', epoch: f.control.state.epoch, requestId: 'settings-' + ++sequence, ...values };
+  }
+  try {
+    await expect(f.control.dispatch(input('reasoning', { reasoningEffort: 'high' }))).rejects.toMatchObject({ code: 'control_required' });
+    await f.control.dispatch(input('claim'));
+    await f.control.dispatch(input('model', { model: 'fixture-model' }));
+    await f.control.dispatch(input('reasoning', { reasoningEffort: 'high' }));
+    await f.control.dispatch(input('mode', { mode: 'plan' }));
+    expect(f.control.state.reasoningEffort).toBe('high');
+    await expect(f.control.dispatch(input('reasoning', { reasoningEffort: 'invented' }))).rejects.toThrow('不支持');
+    await f.control.dispatch(input('prompt', { text: 'Use selected settings' }));
+    for (let i = 0; i < 50 && !f.frames.some(frame => frame.method === 'fixture/turnOptions'); i++) await Bun.sleep(10);
+    expect(f.frames.find(frame => frame.method === 'fixture/turnOptions')?.params).toMatchObject({ model: 'fixture-model', effort: 'high', threadId: 'test-thread-original', collaborationMode: { mode: 'plan', settings: { model: 'fixture-model', reasoning_effort: 'high', developer_instructions: null } } });
+    await expect(f.control.dispatch(input('model', { model: 'fixture-fast' }))).rejects.toThrow('任务结束');
+    await f.control.dispatch(input('stop'));
+    await f.control.dispatch(input('model', { model: 'fixture-fast' }));
+    expect(f.control.state.reasoningEffort).toBeUndefined();
+    await expect(f.control.dispatch(input('reasoning', { reasoningEffort: 'high' }))).rejects.toThrow('不支持');
+    const compact = input('compact');
+    await f.control.dispatch(compact); await f.control.dispatch(compact);
+    for (let i = 0; i < 50 && !f.frames.some(frame => frame.method === 'fixture/compacted'); i++) await Bun.sleep(10);
+    expect(f.frames.filter(frame => frame.method === 'fixture/compacted')).toHaveLength(1);
+    await f.control.dispatch(input('review'));
+    for (let i = 0; i < 50 && !f.frames.some(frame => frame.method === 'fixture/reviewOptions'); i++) await Bun.sleep(10);
+    expect(f.frames.find(frame => frame.method === 'fixture/reviewOptions')?.params).toMatchObject({ threadId: 'test-thread-original', delivery: 'inline', target: { type: 'uncommittedChanges' } });
+    expect(f.control.state.conversationId).toBe('test-thread-original');
+    const stale = input('model', { model: 'fixture-model' });
+    f.control.desktop();
+    await expect(f.control.dispatch(stale)).rejects.toThrow('控制权已变化');
+  } finally { await f.close(); }
+});

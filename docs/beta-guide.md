@@ -8,11 +8,11 @@
 curl -fsSL https://raw.githubusercontent.com/wuxiaobai24/mobile-herdr/master/install.sh | bash
 ```
 
-脚本从 GitHub 下载固定测试版本 beta.6 并校验 SHA-256，默认把版本放在 `~/.local/share/mobile-herdr/versions`，命令放在 `~/.local/bin`。安装不需要 sudo；缺少 Bun 时从 bun.sh 官方入口安装 Bun 1.4.0 到 `~/.local/share/mobile-herdr/bun`，不升级系统已有 Bun、不修改 shell 配置。已有 Bun 过旧会提示使用者自行处理。自动安装 Bun 需要 unzip，下载与解压还需要 curl、tar、sha256sum 或 shasum。
+脚本从 GitHub 下载固定测试版本 beta.8 并校验 SHA-256，默认把版本放在 `~/.local/share/mobile-herdr/versions`，命令放在 `~/.local/bin`。安装不需要 sudo；缺少 Bun 时从 bun.sh 官方入口安装 Bun 1.4.0 到 `~/.local/share/mobile-herdr/bun`，不升级系统已有 Bun、不修改 shell 配置。已有 Bun 过旧会提示使用者自行处理。自动安装 Bun 需要 unzip，下载与解压还需要 curl、tar、sha256sum 或 shasum。
 
 安装后可直接运行 `mobile-herdr` 和 `mherdr`；若 PATH 未包含 `~/.local/bin`，先 `export PATH="$HOME/.local/bin:$PATH"`，或使用完整路径。下文的 `./bin/mobile-herdr` 均可替换为 `mobile-herdr`，无需进入安装目录。一键安装已装好 `mherdr`，无需再执行 install-agent；手动解压仍按下文安装。
 
-可先下载阅读脚本，再执行 `bash install.sh --help`。支持 `--version 0.2.2-beta.7`、`--prefix <目录>`、`--bin-dir <目录>` 和 `--no-install-bun`。默认版本随经过验证的发布更新，具体旧版必须已有对应 GitHub Release。脚本保留旧版本、不更改 token、不结束已有进程；重复安装同一个包可安全再次执行。已有同名非本工具命令时拒绝覆盖。
+可先下载阅读脚本，再执行 `bash install.sh --help`。支持 `--version 0.2.2-beta.8`、`--prefix <目录>`、`--bin-dir <目录>` 和 `--no-install-bun`。默认版本随经过验证的发布更新，具体旧版必须已有对应 GitHub Release。脚本保留旧版本、不更改 token、不结束已有进程；重复安装同一个包可安全再次执行。已有同名非本工具命令时拒绝覆盖。
 
 安装只准备文件。确认 Herdr 已运行后，执行 `MOBILE_HERDR_HOST=0.0.0.0 mobile-herdr background`，再用手机可达地址运行 `mobile-herdr pair --url ...`；默认未设置 HOST 时只允许本机访问。首次环境要求、HTTPS 与安全配对说明仍见下文。
 
@@ -22,18 +22,18 @@ curl -fsSL https://raw.githubusercontent.com/wuxiaobai24/mobile-herdr/master/ins
 - Bun **1.4.0 或更新版本**，安装方法见 [Bun 官方文档](https://bun.sh/docs/installation)。
 - 正在运行的 Herdr **0.9.3 / protocol 22**。本程序不会安装、升级、启动或停止 Herdr。
 - 使用 Codex / Pi 原生交接时，需先自行安装并登录原 CLI。已验证协议版本为 Codex **0.162.1**、Pi **1.2.0**；其他版本尚未验收。
-- 当前是手机优先 Web 内测，不提供 iOS / Android 安装包。真实手机的键盘、输入法和后台恢复仍需反馈。
+- 当前提供手机优先 Web 与签名 Android APK，不提供 iOS 安装包。真实手机的键盘、输入法和后台恢复仍需反馈。
 
 ## 1. 校验并解压
 
 从邀请人获取同一版本的 `.tar.gz` 与 `.tar.gz.sha256`，放在同一目录：
 
 ```bash
-sha256sum -c mobile-herdr-0.2.2-beta.7.tar.gz.sha256
-# macOS 上校验可用：shasum -a 256 -c mobile-herdr-0.2.2-beta.7.tar.gz.sha256
+sha256sum -c mobile-herdr-0.2.2-beta.8.tar.gz.sha256
+# macOS 上校验可用：shasum -a 256 -c mobile-herdr-0.2.2-beta.8.tar.gz.sha256
 
-tar -xzf mobile-herdr-0.2.2-beta.7.tar.gz
-cd mobile-herdr-0.2.2-beta.7
+tar -xzf mobile-herdr-0.2.2-beta.8.tar.gz
+cd mobile-herdr-0.2.2-beta.8
 ./bin/mobile-herdr --version
 ```
 
@@ -127,11 +127,23 @@ mherdr pi --session <完整会话-ID或路径>
 
 Codex 暂不支持 `--profile` / `--worktree`、最近会话选择器；可使用受支持的 `-c` 配置。特殊审批或 Pi 自定义终端组件仍需要电脑原界面。刷新、断网和关闭手机页面不会停止 agent；草稿保留，恢复后不会自动重发消息。
 
+### 会话快捷选项与 slash
+
+输入框旁的滑杆图标打开快捷选项。原生会话可点“模型”或“思考强度”直接选择，也可输入 `/model`、`/reasoning` 打开列表；`/model <ID>`、`/reasoning <值>` 直接设置。列表来自当前运行实例；工作中暂停修改，先用停止图标或 `/stop` 打断任务。Codex 的选择用于下一次任务。
+
+`/compact` 压缩当前上下文；Codex 还支持 `/plan`、`/build` 和 `/review`。`/search`、`/changes`、`/editor`、`/terminal` 分别打开查找、改动、全屏草稿和同一个 pane 的终端。`/desktop` 交还电脑，`/status`、`/help` 打开快捷面板。输入 `/` 会显示候选；未知原生命令保留草稿并说明限制。
+
+Pi 原生组件可上报当前扩展命令、提示词模板和技能，并在原进程执行。Codex 的普通 TUI 命令不能全部直接当消息发送。旧运行实例未提供的新能力不会显示；不会为了补齐菜单自动重启或替换它。更多边界见 [体验对齐分析](mobile-experience-alignment.md)。
+
+长草稿可从快捷选项展开编辑，收起和 Android 返回仍使用同一份草稿。回复作者行旁的复制图标复制 Markdown 正文。
+
 ### 外观和终端浏览
 
 顶栏点“外观”可切换 Catppuccin 四款 / Flexoki 深浅两款主题，调整阅读字体、阅读字号（14–20px）与终端字号（11–17px）。设置保存在当前设备，刷新可恢复，不需要重新连接会话。
 
 终端支持手势翻阅较早输出；也可直接点“历史”，查看 Herdr 保留的最近 2000 行。历史内可查找、前后跳转匹配、回到顶部或底部；选中文字后点“复制所选”，未选择时复制整份已收到的历史。历史不会自动刷新，点“刷新”保留阅读位置，点“返回终端”继续实时操作。普通终端有本地回滚时使用“回到实时”。浏览手势不向原程序发送按键；需要输入时点“键盘”或使用快捷键。全屏程序反复覆盖的画面不一定会保存在 Herdr 历史中。聊天与终端切换会保留当前 pane 的终端连接和阅读位置。
+
+底部固定粘贴、方向键和键盘图标；快捷键可横向滑动。Ctrl / Alt 点亮后只作用于下一次输入，再点可取消。方向面板可以拖动，覆盖在终端之上；面板按键会真实发送给原程序，拖动不会发送输入。粘贴先显示可编辑预览，确认后才发送，并沿用终端的 bracketed-paste 模式。断线或失去输入权时保留粘贴草稿，恢复后仍需手动确认。
 
 ### 对话查找、历史与 Diff
 
@@ -166,4 +178,14 @@ Codex 新版 broker 可只读查询原 thread 历史；Pi 使用当前运行实�
 
 电脑上也可运行 `mherdr --version`、`mherdr doctor --json`、`mherdr status --json` 和后台 bridge 的 `./bin/mobile-herdr status --json`。这些 CLI 输出与本机 `bridge.log` 可能包含路径、地址或会话 ID，分享前自行脱敏。不要发送 token、配对二维码、完整聊天记录或未脱敏的截图。
 
-当前边界：没有每设备独立撤销；浏览器保存连接凭证与草稿。历史受 provider 与 Herdr 保留范围限制，不承诺恢复所有历史；搜索不扫描尚未加载内容。附件、推送、relay、文件工作台、开机自启和原生安装包未交付。初期建议 2–5 位朋友，每人部署自己的开发机，不共享可控制终端的凭证。
+当前边界：没有每设备独立撤销；浏览器保存连接凭证与草稿。历史受 provider 与 Herdr 保留范围限制，不承诺恢复所有历史；搜索不扫描尚未加载内容。附件上传、推送、relay、文件编辑工作台、开机自启和 iOS 安装包未交付；Android 提供签名 APK。初期建议 2–5 位朋友，每人部署自己的开发机，不共享可控制终端的凭证。
+
+### 浏览与下载项目文件
+
+手机点“更多 → 浏览项目文件”，桌面点顶部文件夹，或在输入框执行 `/files`。目录跟随所选开发机、session 和 pane 的 `foreground_cwd` / `cwd`；本机与 Herdr SSH 机器使用相同入口。点目录进入，点文件预览，右侧下载图标可直接保存。
+
+文本、代码和 Markdown 按原文预览（前 256 KB），PNG / JPEG / GIF / WebP 支持 8 MB 内预览。其他格式可下载后打开；单文件下载上限 100 MB。Web 使用浏览器下载；Android 下载完成后弹出系统“另存为”，可选择位置或取消。文件列表可筛选当前已加载的目录，超出 1000 项会提示进入子目录。
+
+文件浏览只读，不能编辑、删除或上传。路径不能越过项目根目录，指向外部的符号链接显示为不可访问；会话报告的目录发生变化后，需重新打开项目目录。连接凭证仅放在请求头中，下载链接不含 token。
+
+版本更新针对 Web Bridge，Android APK 另从发布页下载安装。检查失败可点击刷新重试；上次更新失败或中断不会永久卡在“更新中”。后台更新以实际运行版本判断目标，工作区源码版本不同也能升级。公开更新只安装已有完整 GitHub 发布包，本地未发布的改动不会自动出现在公开更新中。

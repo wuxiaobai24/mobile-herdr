@@ -1,3 +1,4 @@
+import { FileBrowser } from './components/FileBrowser';
 import { UpdatePanel } from './components/UpdatePanel';
 import { useTakeover } from './useTakeover';
 import { useEffect, useState } from 'react';
@@ -93,6 +94,7 @@ function Workbench(): React.JSX.Element {
   const [readingToolsOpen, setReadingToolsOpen] = useState(false);
   const [installOpen, setInstallOpen] = useState(false);
   const [changesOpen, setChangesOpen] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
   const [updateOpen, setUpdateOpen] = useState(false);
   const pwa = usePwaInstall();
   const [pairing, setPairing] = useState(consumePairing);
@@ -284,7 +286,7 @@ function Workbench(): React.JSX.Element {
             {!desktop && <IconButton label="打开会话列表" onPress={() => setDrawer(true)}><Menu size={21} color={colors.text} /></IconButton>}
             {!desktop && width < 360 ? <View accessibilityLabel={`${machine?.name} · ${machine?.remoteSession ?? session} · ${pane?.pane_id}`} style={{ flex: 1, gap: 3 }}><View style={[styles.row, {gap: 4}]}><Text numberOfLines={1} style={[styles.muted, {flex: 1, fontSize: 11}]}>{machine?.name}</Text><Text numberOfLines={1} style={[styles.muted, {flexShrink: 1, maxWidth: '58%', fontSize: 11}]}>{machine?.remoteSession ?? session}</Text></View><Text numberOfLines={1} style={{color: colors.text, fontSize: 13, fontFamily: mono}}>{pane?.pane_id ?? '选择会话'}</Text></View> : <View style={{ flex: 1, gap: 3 }}><View style={[styles.row, { gap: 8 }]}><Text numberOfLines={1} style={{ color: colors.text, fontSize: 15, fontWeight: '600', flexShrink: 1 }}>{workspace?.label ?? 'Mobile Herdr'}</Text>{desktop && <><ChevronRight size={13} color={colors.dim} /><Text style={[styles.muted, { fontFamily: mono }]}>{pane?.pane_id ?? '选择会话'}</Text></>}</View>{desktop ? <Text numberOfLines={1} style={[styles.muted, { fontSize: 12, fontFamily: mono }]}>{pane?.foreground_cwd ?? pane?.cwd ?? '你的开发机，随身继续'}</Text> : <View style={[styles.row, { gap: 4 }]}><Text numberOfLines={1} style={[styles.muted, { fontSize: 12, flexShrink: 1 }]}>{machine ? `${machine.name} · ${machine.remoteSession ?? session}` : '你的开发机，随身继续'}</Text>{pane && <Text style={[styles.muted, { fontSize: 12, fontFamily: mono }]}>· {pane.pane_id}</Text>}</View>}</View>}
             {desktop && <View style={[styles.row, { gap: 13, marginRight: 12 }]}><Text style={styles.muted}>{counts.working} 工作中</Text><Pressable onPress={() => setAttention(!attention)}><Text style={{ color: counts.blocked ? colors.amber : colors.muted, fontSize: 13 }}>{counts.blocked} 需要你</Text></Pressable></View>}
-            {desktop && <><IconButton label="查看改动" onPress={() => setChangesOpen(true)}><FileDiff size={19} color={colors.muted} /></IconButton><IconButton label="版本更新" onPress={() => setUpdateOpen(true)}><Download size={19} color={colors.muted} /></IconButton></>}{desktop && <IconButton label="外观设置" onPress={() => setAppearanceOpen(true)}><Palette size={19} color={colors.muted} /></IconButton>}
+            {desktop && <><IconButton label="浏览项目文件" onPress={() => setFilesOpen(true)}><Folder size={19} color={colors.muted} /></IconButton><IconButton label="查看改动" onPress={() => setChangesOpen(true)}><FileDiff size={19} color={colors.muted} /></IconButton><IconButton label="版本更新" onPress={() => setUpdateOpen(true)}><Download size={19} color={colors.muted} /></IconButton></>}{desktop && <IconButton label="外观设置" onPress={() => setAppearanceOpen(true)}><Palette size={19} color={colors.muted} /></IconButton>}
             {!desktop && <ModeTabs mode={mode} onChange={changeMode} compact />}
             {!desktop && <View accessibilityLabel={`连接状态：${connectionLabel}`}><IconButton label="更多会话操作" onPress={() => setMobileActionsOpen(true)}><MoreHorizontal size={22} color={colors.text} /></IconButton><View pointerEvents="none" style={{ position: 'absolute', top: 6, right: 5 }}><Dot status={online ? 'done' : 'blocked'} /></View></View>}
             {desktop && <View accessibilityLabel={`连接状态：${connectionLabel}`} style={[styles.row, { gap: 6, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.surface }]}><Dot status={online ? 'done' : 'blocked'} /><Text style={{ color: online ? colors.muted : colors.amber, fontSize: 12 }}>{connectionLabel}</Text></View>}
@@ -301,7 +303,7 @@ function Workbench(): React.JSX.Element {
             {(mode === 'terminal' || visitedTerminal === terminalKey) && <View style={{ flex: mode === 'terminal' ? 1 : 0, display: mode === 'terminal' ? 'flex' : 'none', minHeight: 0 }}><Terminal active={mode === 'terminal'} key={terminalKey} machine={machine} session={session} pane={pane.pane_id} /></View>}
             {mode === 'chat' && <View style={{ flex: 1, width: '100%', maxWidth: 880, alignSelf: 'center', minHeight: 0 }}>
               <Conversation toolsOpen={readingToolsOpen} onToolsOpenChange={setReadingToolsOpen} native={!!native} footer={native && <NativeRequests state={native} control={control} online={online} onError={text => notify(text, true)} />} key={`chat:${machine.id}:${session}:${pane.pane_id}:${native?.runtimeId}:${native?.conversationId}`} chat={connection.chat} machine={machine} session={session} pane={pane} online={online} onTerminal={() => changeMode('terminal')} onBound={connection.reconnect} onError={text => notify(text, true)} />
-              <Composer native={native} control={control} compact={compact} key={`composer:${machine.id}:${session}:${pane.pane_id}:${native?.runtimeId}:${native?.conversationId}`} machine={machine} session={session} pane={pane} online={online} onError={text => notify(text, true)} onSent={() => native ? undefined : notify('消息已送入原会话')} onTerminal={() => changeMode('terminal')} />
+              <Composer native={native} control={control} compact={compact} key={`composer:${machine.id}:${session}:${pane.pane_id}:${native?.runtimeId}:${native?.conversationId}`} machine={machine} session={session} pane={pane} online={online} onError={text => notify(text, true)} onSent={() => notify(native ? '' : '消息已送入原会话')} onNavigate={target => { if (target === 'search') setReadingToolsOpen(true); else if (target === 'files') setFilesOpen(true); else setChangesOpen(true); }} onTerminal={() => changeMode('terminal')} />
             </View>}
           </> : <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 18, padding: 30 }}><HerdMark /><Text style={{ color: colors.text, fontSize: 24, fontWeight: '500' }}>{machine ? '选择一个原有会话' : '你的开发机，随身继续。'}</Text><Text style={[styles.muted, { textAlign: 'center', maxWidth: 340 }]}>{machine ? '工作区、终端和 agent 都来自开发机上运行中的 Herdr。' : '连接 Herdr，打开原来的 session。离开电脑，agent 的工作仍在继续。'}</Text><Pressable onPress={() => machine ? setDrawer(true) : setShowConnect(true)} style={styles.button}><Text style={styles.buttonText}>{machine ? '查看会话' : '连接开发机'}</Text><ArrowRight size={16} color={colors.accentInk} /></Pressable></View>}
 
@@ -325,12 +327,13 @@ function Workbench(): React.JSX.Element {
       title={workspace?.label ?? '当前会话'} target={`${machine?.name ?? '开发机'} · ${machine?.remoteSession ?? session} · ${pane?.pane_id ?? '未选择 pane'}`}
       status={`${connectionLabel}${pane ? ' · ' + statusLabel[pane.agent_status] : ''}`}
       nativeLabel={native ? '原生连接详情' : '启用手机接管'} onNativeDetails={['codex', 'pi'].includes(pane?.agent ?? '') ? () => setNativeDetailsOpen(true) : undefined}
-      onUpdate={() => setUpdateOpen(true)} onChanges={() => setChangesOpen(true)} onInstall={pwa.installed ? undefined : () => setInstallOpen(true)} onReading={() => { setMode('chat'); setReadingToolsOpen(true); }} onAppearance={() => setAppearanceOpen(true)}
+      onFiles={() => setFilesOpen(true)} onUpdate={() => setUpdateOpen(true)} onChanges={() => setChangesOpen(true)} onInstall={pwa.installed ? undefined : () => setInstallOpen(true)} onReading={() => { setMode('chat'); setReadingToolsOpen(true); }} onAppearance={() => setAppearanceOpen(true)}
       onMachines={() => setMachinePanel(true)} onAttention={() => { setAttention(true); setDrawer(true); }} />}
     <DiagnosticsPanel visible={diagnosticsOpen} machine={machine} session={session} pane={pane?.pane_id} onClose={() => setDiagnosticsOpen(false)} />
     <AppearancePanel visible={appearanceOpen} onClose={() => setAppearanceOpen(false)} />
     <PwaInstallPanel visible={installOpen} onClose={() => setInstallOpen(false)} pwa={pwa} />
-    <UpdatePanel visible={updateOpen} onClose={() => setUpdateOpen(false)} machine={machine} />
+    <UpdatePanel visible={updateOpen} onClose={() => setUpdateOpen(false)} machine={machine?.remote ? machines.find(item => item.id === machine.parentId) : machine} />
+    {filesOpen && machine && pane && <FileBrowser key={`${machineScope(machine)}:${session}:${pane.pane_id}`} machine={machine} session={session} pane={pane.pane_id} onClose={() => setFilesOpen(false)} />}
     <ChangesPanel visible={changesOpen} onClose={() => setChangesOpen(false)} messages={connection.chat?.messages ?? []} />
     <ConnectDialog key={pairingRevision} visible={showConnect} canClose={!!machines.length} onClose={() => { setShowConnect(false); setPairing(undefined); }} onConnect={async (machine, info) => { await addMachine(machine, info); setPairing(undefined); }} pairing={pairing} />
   </SafeAreaView>;

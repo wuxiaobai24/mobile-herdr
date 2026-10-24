@@ -1,6 +1,6 @@
 # Beta 发布流程
 
-当前版本：**0.2.2-beta.7**。源码公开，运行包以 GitHub prerelease 分发；每人自行部署自己的开发机。仍先以少量朋友验收真实设备行为，不需要公共 bridge、账号系统或手机应用商店。
+当前版本：**0.2.2-beta.8**。源码公开，运行包以 GitHub prerelease 分发；每人自行部署自己的开发机。仍先以少量朋友验收真实设备行为，不需要公共 bridge、账号系统或手机应用商店。
 
 ## 交付物
 
@@ -24,9 +24,11 @@ beta.6 将 token 最低长度降至8，CLI、服务端、手动表单与配对�
 
 beta.7 增加首次一键接入现有 Codex / Pi、Chat 与终端控制权切换、中断、手机紧凑布局、改动总览、PWA 和托管 bridge 一键更新；同时首次分发签名 Android release APK。APK 使用仓库外的原签名密钥，versionCode 递增至2。实体手机、最低 Android API 和非 Linux x64 bridge 尚未验收，发布说明须保留这些边界。
 
+beta.8 增加 slash 候选、模型 / 思考强度快捷选择、停止与计划模式、终端修饰键 / 方向面板 / 粘贴预览，以及本机和 SSH 项目文件浏览、预览与下载；修复运行版本与源码版本不一致导致更新失败。Android versionCode 递增至3，使用原签名，系统另存为通过原生依赖补丁与源码编译修复。
+
 产物位于 `artifacts/releases/`：
 
-- `mobile-herdr-0.2.2-beta.7.tar.gz`：预构建 Web、bundled bridge / 启动器 / Codex host / Pi 扩展、命令入口、内测指南、第三方许可文件。
+- `mobile-herdr-0.2.2-beta.8.tar.gz`：预构建 Web、bundled bridge / 启动器 / Codex host / Pi 扩展、命令入口、内测指南、第三方许可文件。
 - 同名 `.tar.gz.sha256`：压缩包 SHA-256。
 - 同名 `.tar.gz.verification.json`：本机验证的平台、版本、包摘要和实际通过项目。它是**打包冒烟测试**，不等同于真实 Herdr、真实 provider、真机或跨平台认证。
 
@@ -34,7 +36,7 @@ beta.7 增加首次一键接入现有 Codex / Pi、Chat 与终端控制权切换
 
 构建使用 [Bun bundler](https://bun.sh/docs/bundler)；保持现有相对入口路径，将运行依赖打进 JS 包。Pi 扩展以 Node 目标构建。选择此方式是为了保留 Bun PTY、独立 Codex host 和 Pi 进程内加载的现有语义；当前不做单个本地可执行文件或 Docker 镜像。朋友仍须自己安装 Bun 与 Herdr。0.2.2-beta.6 另附 `server/ssh-worker.bundle.js`，供 SSH stdin 临时执行；远端无需安装本项目，但需 Bun。打包冒烟测试显式关闭真实机器发现，避免读取或连接测试者的 SSH hosts。
 
-Android 另运行 `bun run build:android`，并在专用模拟器上执行 `MOBILE_HERDR_ANDROID_SERIAL=emulator-... bun run test:android`。将验证后的 APK 复制为 `mobile-herdr-0.2.2-beta.7.apk`，为此文件名生成 `.sha256`，随 release 上传；签名密钥和密码绝不上传。源码的 `artifacts/android/` 仍保持忽略。
+Android 另运行 `bun run build:android`，并在专用模拟器上执行 `MOBILE_HERDR_ANDROID_SERIAL=emulator-... bun run test:android`。将验证后的 APK 复制为 `mobile-herdr-0.2.2-beta.8.apk`，为此文件名生成 `.sha256`，随 release 上传；签名密钥和密码绝不上传。源码的 `artifacts/android/` 仍保持忽略。
 
 ## 发出前
 

@@ -1,15 +1,21 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ComponentRef } from 'react';
-import { ActivityIndicator, AppState, Platform, Pressable, Text, TextInput, View, useWindowDimensions } from 'react-native';
-import { ArrowUp, Check, Square, TerminalSquare } from 'lucide-react-native';
+import { ActivityIndicator, AppState, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { ArrowUp, Check, Minimize2, SlidersHorizontal, Square, TerminalSquare } from 'lucide-react-native';
 import type { Machine, Pane } from '../../shared/protocol';
 import type { NativeState } from '../../shared/native';
 import type { NativeControl } from '../useNativeControl';
 import { ApiError, api, machineScope, panePath, requestId } from '../../shared/client';
 import { loadDraft, saveDraft } from '../storage';
 import { useTheme } from '../theme';
+import { availableChatCommands, chatCommands, parseChatCommand } from '../../shared/chat-commands';
+import { SessionOptions, type OptionsPage } from './SessionOptions';
 
-interface Props { machine: Machine; session: string; pane: Pane; online: boolean; compact?: boolean; native?: NativeState | null; control?: NativeControl; onError: (message: string) => void; onSent: () => void; onTerminal: () => void }
-export function Composer({ machine, session, pane, online, compact = false, native, control, onError, onSent, onTerminal }: Props): React.JSX.Element {
+const definitiveRejections = new Set(['agent_working', 'agent_blocked', 'agent_not_ready', 'not_an_agent', 'unauthorized', 'invalid_input', 'pane_not_found', 'unsupported_action', 'control_required', 'control_changed', 'conversation_changed', 'runtime_changed']);
+function wasRejected(error: unknown): boolean { return error instanceof ApiError && definitiveRejections.has(error.code); }
+
+interface Props { machine: Machine; session: string; pane: Pane; online: boolean; compact?: boolean; native?: NativeState | null; control?: NativeControl; onError: (message: string) => void; onSent: () => void; onTerminal: () => void; onNavigate?: (target: 'search' | 'changes' | 'files') => void }
+export function Composer({ machine, session, pane, online, compact = false, native, control, onError, onSent, onTerminal, onNavigate }: Props): React.JSX.Element {
   const { colors, styles } = useTheme();
   const key = `${machineScope(machine)}:${session}:${pane.pane_id}${native ? `:${native.runtimeId}:${native.conversationId ?? 'starting'}` : ''}`;
   const { width } = useWindowDimensions();
@@ -17,6 +23,9 @@ export function Composer({ machine, session, pane, online, compact = false, nati
   const input = useRef<ComponentRef<typeof TextInput>>(null);
   const [nativeInputHeight, setNativeInputHeight] = useState(44);
   const [text, setText] = useState('');
+  const [expanded, setExpanded] = useState(false);
+  const [optionsPage, setOptionsPage] = useState<OptionsPage>();
+  const [submissionError, setSubmissionError] = useState('');
   const [busy, setBusy] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [ready, setReady] = useState(false);
@@ -24,24 +33,29 @@ export function Composer({ machine, session, pane, online, compact = false, nati
   const current = useRef('');
   const mounted = useRef(true);
   const request = useRef<{ text: string; id: string } | null>(null);
+  const quickRequest = useRef<{ text: string; id: string } | null>(null);
   const working = native ? native.status === 'working' || native.status === 'blocked' : pane.agent_status === 'working';
   const canStop = online && !stopping && (!native || native.connected && !!control?.clientId && (control.owns || native.owner === 'desktop'));
   const blocked = native ? native.requests.length > 0 : pane.agent_status === 'blocked';
   const writable = native ? native.connected && !!control?.owns : !!pane.agent;
+  const command = parseChatCommand(text);
+  const commands = availableChatCommands(native);
+  const suggestions = /^\/[\w:.-]*$/.test(text) ? commands.filter(command => command.name.toLowerCase().startsWith(text.slice(1).toLowerCase())) : [];
   useLayoutEffect(() => {
-    if (!mobile || Platform.OS !== 'web') return;
+    if (!mobile || expanded || Platform.OS !== 'web') return;
     const element = input.current as unknown as HTMLTextAreaElement | null;
     if (!element?.style) return;
     // Reset before measuring so removing lines also shrinks the textarea.
     element.style.height = '0px';
     element.style.height = `${Math.max(44, Math.min(compact ? 100 : 124, element.scrollHeight))}px`;
-  }, [text, mobile, width, compact]);
+  }, [text, mobile, width, compact, expanded]);
   useEffect(() => {
     mounted.current = true;
     setReady(false); request.current = null;
-    void Promise.all([loadDraft(key), loadDraft(key + ':delivery')]).then(([value, delivery]) => {
+    void Promise.all([loadDraft(key), loadDraft(key + ':delivery'), loadDraft(key + ':quick-delivery')]).then(([value, delivery, quickDelivery]) => {
       if (!mounted.current) return;
       if (delivery) { try { request.current = JSON.parse(delivery); } catch { request.current = null; } }
+      if (quickDelivery) { try { quickRequest.current = JSON.parse(quickDelivery); } catch { quickRequest.current = null; } }
       current.current = value; setText(value); setReady(true);
     }).catch(() => { if (mounted.current) { setReady(true); onError('无法读取草稿存储。'); } });
     return () => { mounted.current = false; void saveDraft(key, current.current).catch(() => {}); };
@@ -63,36 +77,90 @@ export function Composer({ machine, session, pane, online, compact = false, nati
     }, 200);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [key, text, ready]);
-  function edit(value: string): void { current.current = value; setText(value); setDraftStatus('saving'); }
-  async function send(): Promise<void> {
-    if (!text.trim() || busy || !online || (working && !native) || blocked || !writable) return;
-    const submission = text;
-    if (request.current?.text !== submission) request.current = { text: submission, id: requestId() };
+  function edit(value: string): void { current.current = value; setText(value); setDraftStatus('saving'); setSubmissionError(''); }
+  async function runCommand(name: string, argument: string, id: string): Promise<boolean> {
+    if (name === 'help' || name === 'status' || name === 'model' && !argument || name === 'reasoning' && !argument) {
+      setExpanded(false); setOptionsPage(name === 'model' || name === 'reasoning' ? name : 'menu'); return false;
+    }
+    setOptionsPage(undefined);
+    if (name === 'editor') { setExpanded(true); return false; }
+    if (name === 'terminal') { setExpanded(false); onTerminal(); return false; }
+    if (name === 'search' || name === 'changes' || name === 'files') { setExpanded(false); onNavigate?.(name); return false; }
+    if (name === 'stop') { if (!canStop) throw new Error('当前连接无法停止任务。'); await interrupt(id); return false; }
+    if (!native || !control || !native.connected || !online) throw new Error('此操作需要连接原生会话；可切换终端执行。');
+    if (!control.owns) throw new Error('请先点击「在手机继续」，再执行此操作。');
+    if (name === 'model') await control.act('model', { model: argument }, id);
+    else if (name === 'reasoning') await control.act('reasoning', { reasoningEffort: argument }, id);
+    else if (name === 'compact') await control.act('compact', {}, id);
+    else if ((name === 'plan' || name === 'build') && native.capabilities.modes) await control.act('mode', { mode: name === 'plan' ? 'plan' : 'default' }, id);
+    else if (name === 'review' && native.capabilities.review) await control.act('review', {}, id);
+    else if (name === 'desktop') await control.act('release', {}, id);
+    else if (native.commands?.some(command => command.name === name)) await control.act('command', { text: `/${name}${argument ? ' ' + argument : ''}` }, id);
+    else throw new Error(`当前会话未提供 /${name}，可切换终端执行。`);
+    return true;
+  }
+  async function quickCommand(name: string): Promise<void> {
+    if (busy) return;
+    if (!chatCommands.some(command => command.name === name)) {
+      if (current.current.trim() && !/^\/[\w:.-]*$/.test(current.current)) { onError('请先处理当前草稿，再填入命令。'); return; }
+      setOptionsPage(undefined); edit(`/${name} `); input.current?.focus(); return;
+    }
+    const fromSlash = /^\/[\w:.-]*$/.test(current.current);
+    const submission = current.current;
+    const commandText = '/' + name;
+    if (quickRequest.current?.text !== commandText) quickRequest.current = { text: commandText, id: requestId() };
     setBusy(true);
     try {
-      // Keep a receipt across refreshes, including ambiguous network failures.
-      await saveDraft(key, submission); await saveDraft(key + ':delivery', JSON.stringify(request.current));
-      if (native && control) await control.act('prompt', { text: submission }, request.current.id);
-      else await api(machine, panePath(session, pane.pane_id, 'prompt'), { body: { text: submission }, id: request.current.id });
-      // Save against the submitted pane even if navigation happened during the request.
-      if (current.current === submission) { current.current = ''; await saveDraft(key, ''); if (mounted.current) setText(''); }
-      request.current = null;
-      await saveDraft(key + ':delivery', '');
-      if (mounted.current) onSent();
+      await saveDraft(key + ':quick-delivery', JSON.stringify(quickRequest.current));
+      await runCommand(name, '', quickRequest.current.id);
+      quickRequest.current = null; await saveDraft(key + ':quick-delivery', '');
+      if (fromSlash && current.current === submission) edit('');
     } catch (error) {
-      if (error instanceof ApiError && ['agent_working', 'agent_blocked', 'agent_not_ready', 'not_an_agent', 'unauthorized', 'invalid_input', 'pane_not_found'].includes(error.code)) request.current = null;
-      if (mounted.current) onError(error instanceof Error ? error.message : '发送失败，草稿已保留。');
+      if (wasRejected(error)) { quickRequest.current = null; await saveDraft(key + ':quick-delivery', '').catch(() => {}); }
+      onError(error instanceof Error ? error.message : '命令执行失败，请检查当前会话。');
     }
     finally { if (mounted.current) setBusy(false); }
   }
-  async function interrupt(): Promise<void> {
+  async function send(): Promise<void> {
+    if (text.trim() === '/') { setOptionsPage('menu'); edit(''); return; }
+    if (!text.trim() || !ready || busy || !command && (!online || (working && !native) || blocked || !writable)) return;
+    const submission = text;
+    if (request.current?.text !== submission) request.current = { text: submission, id: requestId() };
+    setBusy(true); setSubmissionError('');
+    try {
+      // Keep a receipt across refreshes, including ambiguous network failures.
+      await saveDraft(key, submission); await saveDraft(key + ':delivery', JSON.stringify(request.current));
+      if (command) await runCommand(command.name, command.argument, request.current.id);
+      else if (native && control) await control.act('prompt', { text: submission }, request.current.id);
+      else await api(machine, panePath(session, pane.pane_id, 'prompt'), { body: { text: submission }, id: request.current.id });
+      // Save against the submitted pane even if navigation happened during the request.
+      if (current.current === submission) {
+        await saveDraft(key, '');
+        if (current.current === submission) {
+          current.current = '';
+          if (mounted.current) { setText(''); if (!command) setExpanded(false); }
+        } else await saveDraft(key, current.current);
+      }
+      request.current = null;
+      await saveDraft(key + ':delivery', '');
+      if (mounted.current && !command) onSent();
+    } catch (error) {
+      if (wasRejected(error)) { request.current = null; await saveDraft(key + ':delivery', '').catch(() => {}); }
+      if (mounted.current) {
+        const message = error instanceof Error ? error.message : '发送失败，草稿已保留。';
+        setSubmissionError(message); onError(message);
+      }
+    }
+    finally { if (mounted.current) setBusy(false); }
+  }
+  async function interrupt(id = requestId()): Promise<void> {
     if (!canStop) return;
     setStopping(true);
-    try { if (native && control) await control.interrupt(); else await api(machine, panePath(session, pane.pane_id, 'interrupt'), { body: { terminalId: pane.terminal_id, agent: pane.agent, conversation: pane.agent_session?.value } }); }
-    catch (error) { onError(error instanceof Error ? error.message : '中断失败。'); }
+    try { if (native && control) await control.interrupt(id); else await api(machine, panePath(session, pane.pane_id, 'interrupt'), { id, body: { terminalId: pane.terminal_id, agent: pane.agent, conversation: pane.agent_session?.value } }); }
+    catch (error) { onError(error instanceof Error ? error.message : '中断失败。'); throw error; }
     finally { if (mounted.current) setStopping(false); }
   }
-  const disabled = !online || (working && !native) || blocked || !text.trim() || busy || !ready || !writable;
+  const disabled = !text.trim() || busy || !ready || !command && (!online || (working && !native) || blocked || !writable || !!native && working && !native.capabilities.steer);
   function draftHint(): string {
     if (!online) return '离线 · 可继续编辑';
     if (blocked) return '等待确认后发送';
@@ -111,11 +179,11 @@ export function Composer({ machine, session, pane, online, compact = false, nati
     if (working && !native && mobile) return 'Agent 正在工作…';
     return native && working ? '补充到当前任务…' : '继续交给 agent…';
   }
-  const editor = <TextInput ref={input} accessibilityLabel="发给原会话的消息" multiline numberOfLines={mobile ? 1 : undefined} value={text} onChangeText={edit} editable={ready} maxLength={32000}
+  const editor = <TextInput ref={input} accessibilityLabel="发给原会话的消息" multiline autoFocus={expanded} numberOfLines={mobile && !expanded ? 1 : undefined} value={text} onChangeText={edit} editable={ready} maxLength={32000}
     placeholder={placeholder()} placeholderTextColor={colors.muted}
     style={{ color: colors.text, fontSize: 16, lineHeight: 24, padding: mobile ? 10 : 16, minWidth: 0,
-      flex: mobile ? 1 : undefined, height: mobile ? nativeInputHeight : undefined, minHeight: mobile ? 44 : 68,
-      maxHeight: mobile ? 124 : 160, textAlignVertical: 'top' }}
+      flex: expanded || mobile ? 1 : undefined, height: mobile && !expanded ? nativeInputHeight : undefined, minHeight: expanded ? 0 : mobile ? 44 : 68,
+      maxHeight: expanded ? undefined : mobile ? 124 : 160, textAlignVertical: 'top' }}
     onContentSizeChange={event => { if (Platform.OS !== 'web' && mobile) setNativeInputHeight(Math.max(44, Math.min(124, event.nativeEvent.contentSize.height))); }}
     onKeyPress={event => {
       const native = event.nativeEvent as typeof event.nativeEvent & { ctrlKey?: boolean; metaKey?: boolean; isComposing?: boolean };
@@ -126,11 +194,12 @@ export function Composer({ machine, session, pane, online, compact = false, nati
     <Text numberOfLines={1} accessibilityLiveRegion="polite" style={{ color: !online || draftStatus === 'error' ? colors.amber : colors.muted, fontSize: 12, lineHeight: 16 }}>{draftHint()}</Text>
   </View>;
   const actions = <View style={[styles.row, { gap: 4, alignSelf: mobile ? 'flex-end' : undefined }]}>
-    {(working && native || blocked && !native) && <Pressable accessibilityRole="button" onPress={interrupt} disabled={!canStop} accessibilityLabel="中断 agent"
+    {!expanded && <Pressable accessibilityRole="button" accessibilityLabel="会话快捷选项" onPress={() => setOptionsPage('menu')} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}><SlidersHorizontal size={18} color={colors.muted} /></Pressable>}
+    {(working && native || blocked && !native) && <Pressable accessibilityRole="button" onPress={() => { void interrupt().catch(() => {}); }} disabled={!canStop} accessibilityLabel="中断 agent"
       style={[styles.button, styles.secondary, { paddingHorizontal: mobile ? 0 : 10, width: mobile ? 44 : undefined, opacity: canStop ? 1 : 0.4 }]}>
       {stopping ? <ActivityIndicator size="small" color={colors.muted} /> : <Square size={mobile ? 16 : 12} color={colors.text} />}{!mobile && <Text style={{ color: colors.text, fontSize: 13 }}>停止</Text>}
     </Pressable>}
-    {working && !native ? <Pressable accessibilityRole="button" onPress={interrupt} disabled={!canStop} accessibilityLabel="中断 agent"
+    {working && !native && !command ? <Pressable accessibilityRole="button" onPress={() => { void interrupt().catch(() => {}); }} disabled={!canStop} accessibilityLabel="中断 agent"
       style={[styles.button, styles.secondary, { width: mobile ? 44 : undefined, paddingHorizontal: mobile ? 0 : 14, opacity: canStop ? 1 : 0.4 }]}>
       {stopping ? <ActivityIndicator size="small" color={colors.muted} /> : <Square size={16} color={colors.text} />}{!mobile && <Text style={{ color: colors.text, fontSize: 14 }}>中断</Text>}
     </Pressable> : <Pressable accessibilityRole="button" accessibilityLabel="发送消息" disabled={disabled} onPress={send}
@@ -138,7 +207,27 @@ export function Composer({ machine, session, pane, online, compact = false, nati
       {busy ? <ActivityIndicator size="small" color={colors.muted} /> : <><ArrowUp size={mobile ? 20 : 17} color={disabled ? colors.dim : colors.accentInk} />{!mobile && <Text style={{ fontSize: 14, fontWeight: '600', color: disabled ? colors.dim : colors.accentInk }}>{native && working ? '补充' : '发送'}</Text>}</>}
     </Pressable>}
   </View>;
+  const commandSuggestions = !!suggestions.length && <ScrollView testID="slash-suggestions" keyboardShouldPersistTaps="handled" style={{ maxHeight: 176, borderWidth: 1, borderColor: colors.line, borderRadius: 10, backgroundColor: colors.surface, marginBottom: 6 }}>
+    {suggestions.slice(0, 12).map(command => <Pressable key={command.name} accessibilityRole="button" accessibilityLabel={`使用命令 /${command.name}`} onPress={() => void quickCommand(command.name)} style={[styles.row, { minHeight: 44, paddingHorizontal: 12, gap: 12 }]}><Text style={{ color: colors.accent, fontSize: 14 }}>/{command.name}</Text><Text numberOfLines={1} style={[styles.muted, { flex: 1, textAlign: 'right', fontSize: 13 }]}>{command.title}</Text></Pressable>)}
+  </ScrollView>;
+  if (expanded) return <Modal visible animationType="slide" onRequestClose={() => setExpanded(false)}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, minHeight: 0 }} testID="expanded-composer">
+        <View style={[styles.row, { paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1, borderColor: colors.line, gap: 12 }]}>
+          <View style={{ flex: 1, minWidth: 0, gap: 4 }}><Text style={styles.text}>编辑消息</Text><Text numberOfLines={1} style={styles.muted}>{machine.name} · {session} · {pane.pane_id}</Text></View>
+          <Pressable accessibilityRole="button" accessibilityLabel="收起消息编辑器" onPress={() => setExpanded(false)} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}><Minimize2 size={20} color={colors.muted} /></Pressable>
+        </View>
+        {commandSuggestions}{editor}
+        <View style={{ padding: 12, borderTopWidth: 1, borderColor: colors.line, gap: 8 }}>
+          {!!submissionError && <Text accessibilityRole="alert" style={{ color: colors.amber, fontSize: 13, lineHeight: 20 }}>{submissionError}</Text>}
+          <View style={[styles.row, { justifyContent: 'space-between', gap: 8 }]}>{hint}<Text style={styles.muted}>{text.length} / 32000</Text>{actions}</View>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  </Modal>;
   return <View testID="composer-area" style={{ flexShrink: 0, paddingTop: mobile ? 6 : 10, paddingHorizontal: mobile ? 12 : 16, paddingBottom: mobile ? 8 : 12, backgroundColor: colors.bg }}>
+    {optionsPage && <SessionOptions state={native} control={control} online={online} page={optionsPage} onPage={setOptionsPage} onClose={() => setOptionsPage(undefined)} onCommand={name => void quickCommand(name)} />}
+    {commandSuggestions}
     <View testID="composer" style={{ borderWidth: 1, borderColor: colors.line, borderRadius: mobile ? 14 : 16, backgroundColor: colors.surface }}>
       {mobile ? <View style={[styles.row, { alignItems: 'flex-end', padding: 4, gap: 4 }]}>{editor}{actions}</View> : <>
         {editor}

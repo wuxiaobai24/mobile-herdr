@@ -4,11 +4,15 @@
 
 Web 与 Android 共用 React Native 界面、主题和会话协议，支持 Codex / Pi Chat 与电脑终端之间交接控制权，以及原始终端、多开发机、草稿恢复和断网重连。Android 可构建独立签名 APK，安装后无需 Expo Go 或 Metro；扫码、剪贴板、安全存储和系统返回键使用原生能力。构建、安装与验收边界见 [Android 客户端](docs/android.md)。
 
-手机主界面保留一行导航与单行输入框，搜索、历史、改动总览、外观和更新位于“更多”菜单。外观支持 Catppuccin 四款与 Flexoki 深浅主题，可调整阅读字体、阅读字号和终端字号。终端支持手势翻阅、历史查找、选择复制与回到实时。对话支持向前分页、查找已加载消息、跳回上一问；补丁和文件审批按文件展示 Diff，可折叠、查看双栏行号并复制。
+手机主界面保留一行导航与单行输入框，文件浏览、搜索、历史、改动总览、外观和更新位于“更多”菜单。外观支持 Catppuccin 四款与 Flexoki 深浅主题，可调整阅读字体、阅读字号和终端字号。终端支持手势翻阅、历史查找、选择复制与回到实时。对话支持向前分页、查找已加载消息、跳回上一问；补丁和文件审批按文件展示 Diff，可折叠、查看双栏行号并复制。
+
+项目文件可从“更多 → 浏览项目文件”、桌面文件夹图标或 `/files` 打开，支持目录筛选、文本 / 代码及图片预览和鉴权下载。Android 使用系统“另存为”，本机与 SSH 使用同一界面。
+
+输入框旁的图标打开会话快捷选项，支持 slash 候选、模型与思考强度选择、停止、上下文压缩、长草稿全屏编辑和回复复制；Codex 可切换计划 / 执行模式并在原对话审查当前改动，Pi 可执行原进程提供的命令、模板和技能。选项按运行实例能力显示，工作中保留停止图标。终端新增一次性 Ctrl / Alt、悬浮方向面板和显式粘贴预览。详见 [手机体验对齐与能力边界](docs/mobile-experience-alignment.md)。
 
 ## 一键安装
 
-当前版本 **0.2.2-beta.7**，源码公开，运行包见 [GitHub Releases](https://github.com/wuxiaobai24/mobile-herdr/releases)。在已有 Herdr 的开发机执行：
+当前版本 **0.2.2-beta.8**，源码公开，运行包见 [GitHub Releases](https://github.com/wuxiaobai24/mobile-herdr/releases)。在已有 Herdr 的开发机执行：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wuxiaobai24/mobile-herdr/master/install.sh | bash

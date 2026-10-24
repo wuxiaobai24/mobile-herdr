@@ -1,4 +1,4 @@
-import { Bell, Download, FileDiff, Monitor, Palette, Search, Server, X } from 'lucide-react-native';
+import { Bell, Download, FileDiff, Folder, Monitor, Palette, Search, Server, X } from 'lucide-react-native';
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { useTheme } from '../theme';
 
@@ -7,12 +7,13 @@ interface Props {
   onReading: () => void; onAppearance: () => void; onMachines: () => void; onAttention: () => void;
   onNativeDetails?: () => void; nativeLabel: string;
   onInstall?: () => void;
-  onChanges: () => void; onUpdate: () => void;
+  onFiles: () => void; onChanges: () => void; onUpdate: () => void;
 }
 
-export function MobileActions({ visible, onClose, title, target, status, onReading, onAppearance, onMachines, onAttention, onNativeDetails, nativeLabel, onInstall, onChanges, onUpdate }: Props): React.JSX.Element {
+export function MobileActions({ visible, onClose, title, target, status, onReading, onAppearance, onMachines, onAttention, onNativeDetails, nativeLabel, onInstall, onFiles, onChanges, onUpdate }: Props): React.JSX.Element {
   const { colors, styles } = useTheme();
   const actions = [
+    { label: '浏览项目文件', icon: Folder, run: onFiles },
     { label: '查看改动', icon: FileDiff, run: onChanges },
     { label: '查找与历史', icon: Search, run: onReading },
     ...(onNativeDetails ? [{ label: nativeLabel, icon: Monitor, run: onNativeDetails }] : []),

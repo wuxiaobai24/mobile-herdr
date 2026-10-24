@@ -35,6 +35,7 @@ export async function createFixture() {
   };
   const calls: { method: string; params: any }[] = [];
   let foregroundPid = 100;
+  let snapshotError = false;
   let screen = '原始终端输出';
   const sockets = new Set<Socket>();
   const socketPath = join(directory, 'herdr.sock');
@@ -50,7 +51,10 @@ export async function createFixture() {
       let result: unknown;
       let error: unknown;
       const pane = snapshot.panes.find(pane => pane.pane_id === (params.pane_id ?? params.target));
-      if (method === 'session.snapshot') result = { type: 'session_snapshot', snapshot };
+      if (method === 'session.snapshot') {
+        if (snapshotError) error = { code: 'fixture_unavailable', message: 'Fixture temporarily unavailable' };
+        else result = { type: 'session_snapshot', snapshot };
+      }
       else if (method === 'pane.process_info') result = { process_info: { foreground_processes: [{ pid: foregroundPid, argv: ['pi'] }] } };
       else if (method === 'pane.read') result = { type: 'pane_read', read: { text: screen, revision: 1, truncated: false } };
       else if (method === 'agent.prompt') {
@@ -72,6 +76,7 @@ export async function createFixture() {
     config, snapshot, calls, directory, transcript, bridge, url: `http://127.0.0.1:${bridge.port}`,
     setScreen(text: string) { screen = text; },
     setForegroundPid(pid: number) { foregroundPid = pid; },
+    setSnapshotError(value: boolean) { snapshotError = value; },
     async close() { bridge.stop(true); for (const socket of sockets) socket.destroy(); api.close(); await rm(directory, { recursive: true, force: true }); },
   };
 }

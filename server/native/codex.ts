@@ -1,5 +1,5 @@
 import type { ServerWebSocket } from 'bun';
-import type { NativeAction, NativeRequest } from '../../shared/native';
+import type { NativeAction, NativeModel, NativeRequest } from '../../shared/native';
 import type { ChatMessage } from '../../shared/protocol';
 import { NativeController } from './controller';
 import { BridgeError } from '../rpc';
@@ -10,6 +10,13 @@ import { CODEX_FRAME_BYTES, ndjsonLines } from './ndjson';
 type Frame = Record<string, any>;
 type Desktop = ServerWebSocket<{ ready: boolean }>;
 const READ_METHOD = /(?:\/(?:list|read|get|status|detect)$)|^(?:model\/list|skills\/list|account\/read|configRequirements\/read|thread\/loaded\/list|thread\/turns\/list|thread\/items\/list|fuzzyFileSearch)/;
+function nativeModels(catalog: Frame): NativeModel[] {
+  return (catalog.data ?? []).filter((row: Frame) => !row.hidden).slice(0, 100).map((row: Frame) => ({
+    id: row.model ?? row.id, name: row.displayName ?? row.model ?? row.id,
+    defaultReasoningEffort: row.defaultReasoningEffort,
+    reasoningEfforts: (row.supportedReasoningEfforts ?? []).map((option: Frame) => ({ id: option.reasoningEffort, name: option.reasoningEffort })),
+  }));
+}
 
 /** One app-server connection. The official TUI and phone share its live thread. */
 export class CodexRuntime {
@@ -40,7 +47,9 @@ export class CodexRuntime {
       this.write({ method: 'initialized' });
       try {
         const catalog = await this.call('model/list', {});
-        control.state.models = (catalog.data ?? []).slice(0, 100).map((row: Frame) => ({ id: row.model ?? row.id, name: row.displayName ?? row.model ?? row.id })); control.changed();
+        control.state.models = nativeModels(catalog);
+        control.state.capabilities.reasoning = control.state.models.some(model => !!model.reasoningEfforts?.length);
+        control.changed();
       } catch { control.state.capabilities.models = false; control.changed(); }
     }).catch(error => this.offline(error));
     control.readHistory = async cursor => {
@@ -51,6 +60,9 @@ export class CodexRuntime {
       return { messages: [...(page.data ?? [])].reverse().flatMap((turn: Frame) => (turn.items ?? []).map((item: Frame) => this.itemMessage(item)).filter(Boolean)), nextCursor: page.nextCursor ?? undefined };
     };
     control.perform = input => this.perform(input);
+    control.state.capabilities.compact = true;
+    control.state.capabilities.modes = true;
+    control.state.capabilities.review = true;
     control.state.ready = false;
     control.beforeClaim = () => {
       if (!control.state.connected || !control.state.conversationId || control.state.ready === false || this.selecting) throw new BridgeError('native_not_ready', '电脑正在准备对话，请稍后再接管。', 409);
@@ -154,6 +166,9 @@ export class CodexRuntime {
     }
     if (method === 'turn/plan/updated') this.control.message({ id: `plan-${p.turnId}`, role: 'assistant', text: (p.plan ?? []).map((row: Frame) => `${row.status === 'completed' ? '- [x]' : '- [ ]'} ${row.step}`).join('\n') });
     if (method === 'turn/diff/updated' && p.diff) this.control.message({ id: `diff-${p.turnId}`, role: 'tool', toolName: 'diff', text: p.diff });
+    if (method === 'thread/tokenUsage/updated' && Number.isFinite(p.tokenUsage?.last?.totalTokens) && p.tokenUsage.modelContextWindow > 0) {
+      state.context = { tokens: p.tokenUsage.last.totalTokens, window: p.tokenUsage.modelContextWindow };
+    }
     if (method === 'error') state.error = p.error?.message;
     if (method === 'thread/status/changed' && p.status?.type === 'idle' && !state.requests.length) state.status = 'idle';
     this.control.changed();
@@ -179,6 +194,9 @@ export class CodexRuntime {
       state.messages = []; state.requests = []; state.truncated = false;
     }
     state.conversationId = thread.id; state.model = result.model ?? state.model;
+    state.reasoningEffort = result.reasoningEffort ?? undefined;
+    state.mode = result.collaborationMode?.mode;
+    state.context = undefined;
     const turns = thread.turns ?? [];
     for (const turn of turns) for (const item of turn.items ?? []) this.item(item);
     this.control.changed();
@@ -209,19 +227,44 @@ export class CodexRuntime {
       const content = [{ type: 'text', text: input.text }];
       const result = this.turnId
         ? await this.call('turn/steer', { threadId, expectedTurnId: this.turnId, input: content })
-        : await this.call('turn/start', { threadId, input: content, ...(state.model ? { model: state.model } : {}) });
+        : await this.call('turn/start', { threadId, input: content, ...(state.model ? { model: state.model } : {}), ...(state.reasoningEffort ? { effort: state.reasoningEffort } : {}),
+          ...(state.mode && state.model ? { collaborationMode: { mode: state.mode, settings: { model: state.model, reasoning_effort: state.reasoningEffort ?? null, developer_instructions: null } } } : {}) });
       return { ok: true, turnId: result.turn?.id ?? result.turnId, receipt: input.requestId };
     }
     if (input.action === 'stop') {
       if (!this.turnId) return { ok: true };
       return this.call('turn/interrupt', { threadId, turnId: this.turnId });
     }
-    if (input.action === 'model') {
+    if (input.action === 'model' || input.action === 'reasoning') {
       if (state.status !== 'idle') throw new BridgeError('agent_working', '请在任务结束后切换模型。', 409);
-      if (!input.model || input.model.length > 150) throw new BridgeError('invalid_input', '模型 ID 无效。', 400);
       const catalog = await this.call('model/list', {});
-      if (!(catalog.data ?? []).some((model: Frame) => model.model === input.model || model.id === input.model)) throw new BridgeError('invalid_input', '当前账号未提供此模型。', 400);
-      state.model = input.model; this.control.changed(); return { ok: true };
+      if (state.owner !== input.clientId || state.epoch !== input.epoch || state.conversationId !== threadId) throw new BridgeError('control_changed', '控制权已变化，请重新选择。', 409);
+      if (state.status !== 'idle') throw new BridgeError('agent_working', '请在任务结束后切换设置。', 409);
+      const models = nativeModels(catalog);
+      const model = models.find(model => model.id === (input.action === 'model' ? input.model : state.model));
+      if (!model) throw new BridgeError('invalid_input', '当前账号未提供此模型。', 400);
+      if (input.action === 'reasoning') {
+        if (!model.reasoningEfforts?.some(option => option.id === input.reasoningEffort)) throw new BridgeError('invalid_input', '当前模型不支持此思考强度。', 400);
+        state.reasoningEffort = input.reasoningEffort;
+      } else {
+        state.model = model.id;
+        if (!model.reasoningEfforts?.some(option => option.id === state.reasoningEffort)) state.reasoningEffort = model.defaultReasoningEffort;
+      }
+      state.models = models; this.control.changed();
+      return { ok: true, model: state.model, reasoningEffort: state.reasoningEffort };
+    }
+    if (input.action === 'compact') {
+      if (state.status !== 'idle') throw new BridgeError('agent_working', '请在任务结束后压缩上下文。', 409);
+      return this.call('thread/compact/start', { threadId });
+    }
+    if (input.action === 'mode') {
+      if (state.status !== 'idle') throw new BridgeError('agent_working', '请在任务结束后切换工作模式。', 409);
+      if (!['plan', 'default'].includes(input.mode ?? '')) throw new BridgeError('invalid_input', '工作模式无效。', 400);
+      state.mode = input.mode; this.control.changed(); return { ok: true, mode: state.mode };
+    }
+    if (input.action === 'review') {
+      if (state.status !== 'idle') throw new BridgeError('agent_working', '请在任务结束后开始审查。', 409);
+      return this.call('review/start', { threadId, delivery: 'inline', target: { type: 'uncommittedChanges' } });
     }
     if (input.action === 'reply') {
       const request = this.requests.get(input.request ?? '');
@@ -278,6 +321,12 @@ export class CodexRuntime {
             try {
               const result = await runtime.call(frame.method, frame.params);
               if (selecting) await runtime.selectThread(result);
+              if (frame.method === 'turn/start' && frame.params?.threadId === runtime.control.state.conversationId) {
+                if (frame.params.model) runtime.control.state.model = frame.params.model;
+                if ('effort' in (frame.params ?? {})) runtime.control.state.reasoningEffort = frame.params.effort ?? undefined;
+                if (frame.params.collaborationMode?.mode) runtime.control.state.mode = frame.params.collaborationMode.mode;
+                runtime.control.changed();
+              }
               ws.send(JSON.stringify({ id: frame.id, result }));
             } catch (error) { ws.send(JSON.stringify({ id: frame.id, error: { code: -32000, message: error instanceof Error ? error.message : '请求失败。' } })); }
             finally { if (selecting) { runtime.selecting--; runtime.control.state.ready = runtime.selecting === 0 && !!runtime.control.state.conversationId; runtime.control.changed(); } }

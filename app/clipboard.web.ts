@@ -1,3 +1,7 @@
+export async function readText(): Promise<string> {
+  if (!navigator.clipboard?.readText) throw new Error('请长按输入框粘贴。');
+  return navigator.clipboard.readText();
+}
 export async function copyText(value: string): Promise<void> {
   if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(value); return; }
   const field = document.createElement('textarea'); field.value = value; field.style.position = 'fixed'; field.style.opacity = '0';

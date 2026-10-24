@@ -1,15 +1,15 @@
 import { Database } from 'bun:sqlite';
+import type { Stats } from 'node:fs';
 import { open, realpath, stat } from 'node:fs/promises';
 import { join, relative, isAbsolute } from 'node:path';
 import type { Conversation, Pane, TranscriptCandidate, HistoryPage } from '../shared/protocol';
 import type { BridgeConfig } from './config';
 import { BridgeError, rpc } from './rpc';
-import { historyIdentity, historyCursor, decodeCursor } from './history';
-import { parseTranscript } from './transcript-parser';
+import { historyIdentity, decodeCursor } from './history';
+import { readTranscriptPage } from './transcript-page';
 
 interface Candidate extends TranscriptCandidate { path: string }
 interface Binding { path: string; agent: string; identity: string }
-const MAX_BYTES = 8 * 1024 * 1024;
 
 export class Transcripts {
   private bindings = new Map<string, Binding>();
@@ -131,7 +131,7 @@ export class Transcripts {
     if (!path) return { source: 'unavailable', messages: [], binding: 'none', candidates: (await this.candidates(pane)).map(({ path: _, ...candidate }) => candidate), truncated: false };
     const info = await stat(path), signature = JSON.stringify([socket, pane.terminal_id, pane.agent_session, info.ino, info.size, info.mtimeMs, binding]);
     const cached = this.latest.get(path); if (cached?.signature === signature) return cached.chat;
-    const page = await this.page(socket, pane);
+    const page = await this.readPage(socket, pane, path, info);
     const { messages, ...history } = page;
     const chat: Conversation = { source: pane.agent as Conversation['source'], binding, candidates: [], messages, history, truncated: page.hasMore || !!page.limited };
     if (this.latest.size >= 32) this.latest.delete(this.latest.keys().next().value!);
@@ -141,28 +141,14 @@ export class Transcripts {
     const { path } = await this.locate(socket, pane);
     if (!path) throw new BridgeError('transcript_unbound', '请先选择当前 pane 的聊天记录。', 409);
     const info = await stat(path);
+    return this.readPage(socket, pane, path, info, cursor);
+  }
+  private async readPage(socket: string, pane: Pane, path: string, info: Stats, cursor?: string): Promise<HistoryPage> {
     const identity = historyIdentity([socket, pane.terminal_id, pane.agent, pane.agent_session, path, info.ino, info.birthtimeMs]);
     const position = cursor ? decodeCursor(cursor, identity) : info.size;
     if (!Number.isSafeInteger(position) || Number(position) < 0 || Number(position) > info.size) throw new BridgeError('history_changed', '历史文件已变化，请重新打开对话。', 409);
-    const end = Number(position), start = Math.max(0, end - MAX_BYTES);
     const file = await open(path, 'r');
-    let buffer: Buffer;
-    try { buffer = Buffer.alloc(end - start); const result = await file.read(buffer, 0, buffer.length, start); buffer = buffer.subarray(0, result.bytesRead); }
+    try { return await readTranscriptPage(file, pane.agent ?? '', Number(position), identity); }
     finally { await file.close(); }
-    let offset = start;
-    if (start > 0) { const boundary = buffer.indexOf(10); if (boundary < 0) return { identity, messages: [], hasMore: true, cursor: historyCursor(identity, start), limited: true }; offset += boundary + 1; buffer = buffer.subarray(boundary + 1); }
-    const lines = buffer.toString('utf8').split('\n').slice(0, -1), positions = new Map<string, number>();
-    const parsed = parseTranscript(lines, pane.agent ?? '', { offset, positions });
-    const messages: Conversation['messages'] = [];
-    let bytes = 0;
-    for (let i = parsed.length - 1; i >= 0 && messages.length < 60; i--) {
-      const row = parsed[i], text = row.text.length > 64000 ? '…\n' + row.text.slice(-64000) : row.text;
-      const message = { ...row, text, ...(text !== row.text ? { truncated: true } : {}) }, size = Buffer.byteLength(JSON.stringify(message));
-      if (bytes + size > 256000 && messages.length) break;
-      messages.unshift(message); bytes += size;
-    }
-    const earlier = messages.length ? positions.get(messages[0].id)! : start;
-    const hasMore = start > 0 || parsed.length > messages.length;
-    return { identity, messages, hasMore, cursor: hasMore ? historyCursor(identity, earlier) : undefined };
   }
 }

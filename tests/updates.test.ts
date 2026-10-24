@@ -53,3 +53,49 @@ test('failed new bridge rolls back the selected version and commands while leavi
     expect(JSON.parse(await readFile(join(stateDir, 'update.json'), 'utf8'))).toMatchObject({ phase: 'failed', message: 'Fixture startup failed. 已回滚到原版本。' });
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
 });
+
+test('updater follows the actual managed runtime even when worker source already matches the target', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mh-version-update-')), root = join(directory, 'source'), next = join(directory, 'new'), prefix = join(directory, 'install'), binDir = join(directory, 'bin'), stateDir = join(directory, 'state');
+  for (const path of [root, next, prefix, binDir, stateDir]) await mkdir(path);
+  await symlink(root, join(prefix, 'current'));
+  await writeFile(join(root, '.installation.json'), JSON.stringify({ prefix, binDir }));
+  const old = '0.2.2-beta.6';
+  let runningVersion = old, stops = 0, installed = false;
+  const health = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch() { return Response.json({ version: runningVersion }); } });
+  const record: ManagedRecord = { nonce: 'fixture-old', socket: join(directory, 'control.sock'), directory, pid: process.pid, url: `http://127.0.0.1:${health.port}`, startedAt: '', restart: { MOBILE_HERDR_STATE: stateDir, MOBILE_HERDR_TOKEN: 'fixture-token' } };
+  const server = createServer(socket => socket.once('data', data => { const input = JSON.parse(data.toString()); if (input.action === 'stop') stops++; socket.end(JSON.stringify({ running: input.action !== 'stop' && stops === 0 || runningVersion === version, version: runningVersion }) + '\n'); }));
+  await new Promise<void>(resolve => server.listen(record.socket, resolve));
+  await writeFile(join(stateDir, 'bridge.json'), JSON.stringify(record), { mode: 0o600 });
+  await writeFile(join(stateDir, 'update.json'), JSON.stringify({ id: 'runtime-version', phase: 'installing', current: old, latest: version, available: true, supported: true }));
+  try {
+    await performUpdate(root, stateDir, 'runtime-version', process.pid, { latest: async () => ({ version, tag: 'v' + version }), run: async (args, env) => {
+      if (args[0] === 'bash') { installed = true; await rm(join(prefix, 'current')); await symlink(next, join(prefix, 'current')); }
+      else { runningVersion = version; record.nonce = env.MOBILE_HERDR_NEXT_NONCE!; await writeFile(join(stateDir, 'bridge.json'), JSON.stringify(record), { mode: 0o600 }); }
+    } });
+    expect(installed).toBeTrue(); expect(stops).toBe(1);
+    expect(JSON.parse(await readFile(join(stateDir, 'update.json'), 'utf8'))).toMatchObject({ phase: 'ready', current: version, available: false });
+    expect(await readlink(join(prefix, 'current'))).toBe(next);
+  } finally { health.stop(true); await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('update status recovers stale ready/failed states and detects missing or interrupted workers', async () => {
+  const { updateStatus } = await import('../server/updates');
+  const directory = await mkdtemp(join(tmpdir(), 'mh-update-status-'));
+  const latest = async () => ({ version: '99.0.0', tag: 'v99.0.0' });
+  async function saved(phase: string, extra = {}) { await writeFile(join(directory, 'update.json'), JSON.stringify({ id: 'status-fixture', phase, current: version, latest: version, ...extra })); }
+  try {
+    await saved('ready');
+    expect(await updateStatus(directory, { latest })).toMatchObject({ phase: 'idle', available: true, latest: '99.0.0' });
+    await saved('failed');
+    expect(await updateStatus(directory, { latest })).toMatchObject({ phase: 'idle', available: true });
+    expect(await updateStatus(directory, { latest: async () => ({ version, tag: 'v' + version }) })).toMatchObject({ phase: 'idle', available: false });
+    await saved('installing');
+    expect(await updateStatus(directory, { latest })).toMatchObject({ phase: 'failed', available: true });
+    await saved('installing', { startedAt: Date.now() });
+    expect(await updateStatus(directory, { latest })).toMatchObject({ phase: 'installing' });
+    await writeFile(join(directory, 'update-worker.json'), JSON.stringify({ id: 'status-fixture', pid: 2147483647 }));
+    expect(await updateStatus(directory, { latest })).toMatchObject({ phase: 'failed' });
+    await writeFile(join(directory, 'update-worker.json'), JSON.stringify({ id: 'status-fixture', pid: process.pid }));
+    expect(await updateStatus(directory, { latest: async () => { throw new Error('fixture network down'); } })).toMatchObject({ phase: 'installing' });
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
