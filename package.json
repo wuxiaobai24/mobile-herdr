@@ -27,6 +27,9 @@
     "test:terminal-live": "bun scripts/verify-terminal-live.ts",
     "test:handoff-live": "bun scripts/verify-handoff-live.ts",
     "release:pack": "bun scripts/release.ts",
+    "release:prepare": "bun scripts/prepare-release.ts",
+    "release:publish": "bun scripts/publish-release.ts",
+    "test:release-public": "python scripts/verify-public-release.py",
     "test:release": "bun scripts/verify-release.ts"
   },
   "dependencies": {

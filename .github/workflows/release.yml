@@ -1,0 +1,89 @@
+name: Release beta
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing pushed tag matching package.json (e.g. v0.2.2-beta.13)
+        required: true
+        type: string
+
+# One publisher for the repository; a newer request must not cancel an upload.
+concurrency:
+  group: mobile-herdr-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 120
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.11.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Select private signing directory
+        run: echo "MOBILE_HERDR_ANDROID_SIGNING_DIR=$RUNNER_TEMP/mobile-herdr-signing" >> "$GITHUB_ENV"
+      - name: Check tag and restore original signing credentials
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          test "$RELEASE_TAG" = "v$(bun -p 'require("./package.json").version')"
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          git merge-base --is-ancestor HEAD origin/master
+          test -n "$ANDROID_KEYSTORE_BASE64" && test -n "$ANDROID_KEYSTORE_PASSWORD"
+          umask 077
+          mkdir -p "$MOBILE_HERDR_ANDROID_SIGNING_DIR"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$MOBILE_HERDR_ANDROID_SIGNING_DIR/release.p12"
+          printf '%s' "$ANDROID_KEYSTORE_PASSWORD" > "$MOBILE_HERDR_ANDROID_SIGNING_DIR/password"
+      - run: bun install --frozen-lockfile
+      - name: Install browser and Android build tools
+        run: |
+          uv run --python 3.12 --with playwright==1.60.0 python -m playwright install --with-deps chromium
+          chromium_path=$(uv run --python 3.12 --with playwright==1.60.0 python -c 'from playwright.sync_api import sync_playwright; p = sync_playwright().start(); print(p.chromium.executable_path); p.stop()')
+          sudo ln -sf "$chromium_path" /usr/bin/chromium
+          sdkmanager 'platforms;android-37' 'build-tools;37.0.0' 'ndk;27.1.12297006' 'cmake;3.22.1'
+          sudo chmod 666 /dev/kvm
+      - name: Run every gate and prepare the exact release bytes
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          avd-name: mobile_herdr_release
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-snapshot -gpu swiftshader_indirect
+          script: MOBILE_HERDR_ANDROID_SERIAL=emulator-5554 bun run release:prepare
+      - name: Publish verified assets and check anonymous installation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun run release:publish --publish
+      - name: Keep verified release assets and public download report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ github.run_id }}
+          path: artifacts/releases/
+          if-no-files-found: ignore
+      - name: Remove temporary signing credentials
+        if: always()
+        run: rm -rf "$MOBILE_HERDR_ANDROID_SIGNING_DIR"

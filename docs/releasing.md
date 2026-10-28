@@ -1,5 +1,35 @@
 # Beta 发布流程
 
+## 一键准备与流水线
+
+beta.12 已公开。后续版本优先使用 `.github/workflows/release.yml`，在 GitHub Actions 的 **Release beta → Run workflow** 中输入已推送的版本 tag。工作流本身从默认分支触发，构建源码从输入 tag 检出；新 tag 必须包含本次新增的发布脚本，不能拿 beta.12 的旧 tag 回跑新流水线。
+
+首次配置：在仓库的 `release` environment 中添加 `ANDROID_KEYSTORE_BASE64`（现有 `release.p12` 的 base64）与 `ANDROID_KEYSTORE_PASSWORD`（现有密码文件内容）。通过文件/stdin 或 GitHub 的 secrets 表单录入，不要将值放在命令参数、日志或仓库文件里。这里没有自动上传本机签名凭证。未配置时工作流会在构建前失败；不会创建新密钥。CI 使用临时目录恢复凭证，最后清理，并核对 APK 证书必须是既有发布证书。
+
+每版准备：
+
+1. 更新 `package.json.version`、`install.sh` 默认版本、文档版本及 Android `versionCode`，写好 `docs/release-notes-beta.N.md`；提交并推送。
+2. 创建并推送 `v<package.json.version>` tag，确认它指向该 clean commit。已有公开版本不替换资产；改动进入新版本。
+3. 手动运行工作流。它在 GitHub 托管的独立 Linux runner 上安装工具，在专用 Android 15 模拟器运行类型检查、默认单测、运行包冒烟、重建后的完整 Web UI、双架构签名 release APK 构建和完整 Android 检查，然后准备 7 个资产。
+4. 校验本地摘要、报告、源码提交、安装脚本版本和 Android versionCode；上传草稿并核对服务端摘要后才公开；最后匿名下载并隔离安装两条命令。真实 Herdr/provider 的可选集成和实体手机检查仍单独进行，发布说明必须注明实际覆盖。
+
+仓库级 Actions concurrency 会串行化所有发布，不取消正在上传的任务。发布器固定使用 release ID，不会在每个资产上传时重新按 tag 找草稿；遇到多个同 tag 草稿直接失败，输出 ID，需核对后显式处理。网络中断后可使用保留的**同一批已验证产物**重新执行发布器：已上传文件只允许服务端摘要完全一致，否则停止，不覆盖、不重新打包。已经公开且全部摘要相同则只做公开检查。
+
+本地也可使用同一入口（先准备专用模拟器与原签名文件）：
+
+```bash
+git fetch origin --tags
+MOBILE_HERDR_ANDROID_SERIAL=emulator-5584 bun run release:prepare
+bun run release:publish --check
+bun run release:publish --publish
+# 单独复核当前 tag 的公开下载和匿名安装
+bun run test:release-public
+```
+
+`release:prepare` 从 clean HEAD 开始完成全部检查并生成 Android 摘要报告；不会推送源码或 tag。`release:publish` 只发布当前 clean HEAD + 已推送 tag 的已验证资产，保留原报告，不会重建产物。它使用 `artifacts/releases/.publish.lock` 拒绝同目录并发；异常退出留下锁时，先确认原发布进程已经退出，再手动删除锁目录。Actions run 重跑会重建产物，因此如果上次已上传部分文件且摘要不同，会安全停止；此时下载该 run 保存的原始产物恢复发布，或核对并显式移除未公开草稿后重来。
+
+流水线尚未在 GitHub 托管环境完成首次端到端运行：需先配置原签名 secrets，再用包含这些脚本的新版本 tag 验收。当前 beta.12 的实际发布与验证已完成；不要将本地测试通过描述为云端流水线已验收。
+
 当前开发版本：**0.2.2-beta.12**。源码公开，运行包以 GitHub prerelease 分发；每人自行部署自己的开发机。仍先以少量朋友验收真实设备行为，不需要公共 bridge、账号系统或手机应用商店。
 
 ## 交付物
