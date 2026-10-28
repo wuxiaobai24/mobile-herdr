@@ -5,6 +5,52 @@ import { nativeCall } from '../server/native/registry';
 import { api, panePath } from '../shared/client';
 import type { NativeState, NativeAction } from '../shared/native';
 import { createBridge } from '../server/server';
+import type { Conversation, HistoryPage } from '../shared/protocol';
+
+test('older Codex without turns/list loads and pages the exact thread through thread/read', async () => {
+  const f = await createNativeFixture();
+  const machine = { id: 'test', name: 'test', url: f.url, token: f.config.token };
+  try {
+    const turns = Array.from({ length: 200 }, (_, i) => ({ id: `old-turn-${i}`, status: 'completed', items: [{ id: `old-message-${i}`, type: 'agentMessage', text: `Original message ${i}` }] }));
+    await f.desktopCall('fixture/legacyHistory', { turns });
+    await f.desktopCall('thread/resume', { threadId: f.control.state.conversationId });
+    for (let i = 0; i < 100 && f.control.state.messages.at(-1)?.id !== 'old-message-199'; i++) await Bun.sleep(10);
+    const chat = await api<Conversation>(machine, panePath('default', 'w1:p1', 'chat'));
+    expect(chat.messages.at(-1)?.id).toBe('old-message-199');
+    expect(chat.history?.hasMore).toBe(true);
+    const page = await api<HistoryPage>(machine, panePath('default', 'w1:p1', 'history') + '&cursor=' + encodeURIComponent(chat.history!.cursor!));
+    expect(page.messages[0]?.id).toBe('old-message-0');
+    expect(page.messages.at(-1)?.id).toBe('old-message-39');
+    expect(page.hasMore).toBe(false);
+    expect(f.control.state.conversationId).toBe('test-thread-original');
+  } finally { await f.close(); }
+});
+
+test('Codex skills use discovered paths on the same live provider and keep input fences', async () => {
+  const f = await createNativeFixture();
+  let sequence = 0;
+  const action = (values: Partial<NativeAction>): NativeAction => ({ action: 'prompt', runtimeId: f.control.state.runtimeId,
+    conversationId: f.control.state.conversationId, clientId: 'skills-phone', epoch: f.control.state.epoch,
+    requestId: 'skills-test-' + ++sequence, ...values });
+  try {
+    expect(f.control.state.capabilities.skills).toBe(true);
+    expect(f.control.state.skills?.map(skill => skill.name)).toEqual(['fixture-skill']);
+    await f.control.dispatch(action({ action: 'claim' }));
+    await expect(f.control.dispatch(action({ text: '$fixture-skill 检查布局', skills: ['/not-discovered/SKILL.md'] }))).rejects.toMatchObject({ code: 'invalid_input' });
+    const prompt = action({ text: '$fixture-skill 检查布局', skills: ['/fixture/skills/fixture-skill/SKILL.md'] });
+    await f.control.dispatch(prompt); await f.control.dispatch(prompt);
+    await f.desktopCall('model/list');
+    const starts = f.frames.filter(frame => frame.method === 'fixture/turnOptions');
+    expect(starts).toHaveLength(1);
+    expect(starts[0].params.input).toEqual([{ type: 'text', text: prompt.text }, { type: 'skill', name: 'fixture-skill', path: '/fixture/skills/fixture-skill/SKILL.md' }]);
+    await f.control.dispatch(action({ text: '$fixture-skill 再检查一次' }));
+    await f.desktopCall('model/list');
+    expect(f.frames.filter(frame => frame.method === 'fixture/turnOptions')[1].params.input[1].type).toBe('skill');
+    const stale = action({ text: '$fixture-skill 过期输入' });
+    f.control.desktop();
+    await expect(f.control.dispatch(stale)).rejects.toMatchObject({ code: 'control_changed' });
+  } finally { await f.close(); }
+});
 
 test('same live Codex: takeover fences desktop, streams, steers, routes approvals, deduplicates across bridge reads, returns to desktop', async () => {
   const f = await createNativeFixture();

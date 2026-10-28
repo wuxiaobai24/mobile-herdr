@@ -15,8 +15,10 @@ export interface NativeModel {
   defaultReasoningEffort?: string;
 }
 export interface NativeCommand { name: string; description: string }
+export interface NativeSkill { name: string; path: string; description: string; title?: string }
 export interface NativeState {
-  runtimeId: string; provider: 'codex' | 'pi'; connected: boolean;
+  runtimeId: string; provider: 'codex' | 'pi' | 'omp'; connected: boolean;
+  adapterVersion?: string;
   ready?: boolean;
   owner: 'desktop' | string; epoch: number; revision: number;
   status: 'idle' | 'working' | 'blocked' | 'offline';
@@ -26,14 +28,17 @@ export interface NativeState {
   mode?: 'plan' | 'default';
   context?: { tokens: number; window: number };
   commands?: NativeCommand[];
+  skills?: NativeSkill[];
   messages: ChatMessage[]; requests: NativeRequest[]; truncated: boolean;
-  capabilities: { steer: boolean; approvals: boolean; models: boolean; history?: boolean; reasoning?: boolean; commands?: boolean; compact?: boolean; modes?: boolean; review?: boolean };
+  capabilities: { steer: boolean; idlePrompt?: boolean; approvals: boolean; models: boolean; history?: boolean; reasoning?: boolean; commands?: boolean; skills?: boolean; attachments?: boolean; compact?: boolean; modes?: boolean; review?: boolean };
 }
 export interface NativeAction {
-  action: 'claim' | 'release' | 'prompt' | 'stop' | 'reply' | 'model' | 'reasoning' | 'compact' | 'command' | 'mode' | 'review';
+  action: 'claim' | 'release' | 'prompt' | 'prompt_idle' | 'stop' | 'reply' | 'model' | 'reasoning' | 'compact' | 'command' | 'mode' | 'review';
   runtimeId: string; clientId: string; epoch: number; requestId: string;
   conversationId?: string;
   text?: string; request?: string; decision?: 'accept' | 'decline' | 'cancel';
   answers?: Record<string, string[]>; model?: string; reasoningEffort?: string;
   mode?: 'plan' | 'default';
+  skills?: string[];
+  attachments?: string[];
 }

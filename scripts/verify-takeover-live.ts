@@ -13,6 +13,15 @@ import type { TakeoverState } from '../shared/takeover';
 import { localModel } from '../tests/local-model';
 
 const directory = await mkdtemp(join(tmpdir(), 'mh-takeover-'));
+async function pinnedBinary(provider: 'pi' | 'codex'): Promise<string> {
+  const explicit = process.env[provider === 'pi' ? 'MOBILE_HERDR_PI_BINARY' : 'MOBILE_HERDR_CODEX_BINARY'];
+  if (explicit) return explicit;
+  const child = Bun.spawn(['mise', 'which', provider], { stdout: 'pipe', stderr: 'pipe' });
+  const path = (await new Response(child.stdout).text()).trim();
+  if (await child.exited !== 0 || !path) throw new Error('Set a fixed MOBILE_HERDR_' + provider.toUpperCase() + '_BINARY for the isolated live test.');
+  return path;
+}
+const binaries = { pi: await pinnedBinary('pi'), codex: await pinnedBinary('codex') };
 const name = 'mobile-takeover-test-' + Date.now();
 const sessionDirectory = join(homedir(), '.config/herdr/sessions', name), socket = join(sessionDirectory, 'herdr.sock');
 const stateDir = join(directory, 'state'), piHome = join(directory, 'pi'), codexHome = join(directory, 'codex');
@@ -20,7 +29,10 @@ await mkdir(piHome); await mkdir(codexHome);
 const model = localModel();
 await writeFile(join(piHome, 'models.json'), JSON.stringify({ providers: { fixture: { baseUrl: model.url, api: 'openai-completions', apiKey: 'fixture', models: [{ id: 'fixture-model', contextWindow: 32000, maxTokens: 1024 }] } } }));
 await writeFile(join(codexHome, 'config.toml'), `model="fixture-model"\nmodel_provider="fixture"\n[model_providers.fixture]\nname="fixture"\nbase_url="${model.url}"\nwire_api="responses"\nrequires_openai_auth=false\n[projects.${JSON.stringify(directory)}]\ntrust_level="trusted"\n`);
-const herdr = Bun.spawn(['herdr', '--session', name, 'server'], { stdout: 'ignore', stderr: 'ignore' });
+const herdr = Bun.spawn(['herdr', '--session', name, 'server'], { stdout: 'ignore', stderr: 'ignore', env: { ...process.env,
+  MOBILE_HERDR_STATE: stateDir, MOBILE_HERDR_NATIVE_IDENTITY: undefined, MOBILE_HERDR_NATIVE_DIRECTORY: undefined,
+  HERDR_SOCKET: undefined, HERDR_SOCKET_PATH: undefined, HERDR_PANE_ID: undefined, HERDR_WORKSPACE_ID: undefined, HERDR_TAB_ID: undefined,
+} });
 const config = { ...await loadConfig({ token: 'isolated-takeover-test-key-12345678' }), socket, port: 0, stateDir, piHome, codexHome };
 let packaged: Bun.Subprocess | undefined;
 const releaseRoot = process.env.MOBILE_HERDR_TEST_RELEASE_ROOT;
@@ -63,8 +75,8 @@ try {
   for (const provider of (process.argv.includes('--codex-only') ? ['codex'] : ['pi', 'codex']) as ('pi' | 'codex')[]) {
     stage = provider + ' startup';
     const { root_pane: pane } = await rpc<{ root_pane: Pane }>(socket, 'workspace.create', { cwd: directory, label: 'takeover-' + provider, focus: false });
-    const flags = provider === 'pi' ? '--no-mcp --no-context-files --no-skills --no-prompt-templates --no-themes --no-approve --offline --model fixture/fixture-model' : '--no-alt-screen';
-    await input(pane, `env PI_CODING_AGENT_DIR=${quote(piHome)} CODEX_HOME=${quote(codexHome)} ${provider} ${flags}`);
+    const flags = provider === 'pi' ? '--no-mcp --no-context-files --no-skills --no-prompt-templates --no-themes --no-approve --offline --model fixture/fixture-model' : '--no-alt-screen --model fixture-model';
+    await input(pane, `env PI_CODING_AGENT_DIR=${quote(piHome)} CODEX_HOME=${quote(codexHome)} ${quote(binaries[provider])} ${flags}`);
     await until(async () => (await snapshot()).panes.find(row => row.pane_id === pane.pane_id)?.agent === provider);
     // Only this test-owned pane is used for the initial turn.
     await Bun.sleep(3500);
@@ -78,7 +90,7 @@ try {
       if (files.length !== 1) throw new Error('Test session missing.');
 
     }
-    await until(async () => { current = (await snapshot()).panes.find(row => row.pane_id === pane.pane_id); return current?.agent_status === 'idle' && true; });
+    await until(async () => { current = (await snapshot()).panes.find(row => row.pane_id === pane.pane_id); return ['idle', 'done'].includes(current?.agent_status ?? ''); });
     const before = await rpc<{ process_info: { foreground_processes: { pid: number }[] } }>(socket, 'pane.process_info', { pane_id: pane.pane_id });
     if (provider === 'codex') { await rpc(socket,'agent.prompt',{target:pane.pane_id,text:'/status'}); await Bun.sleep(500); }
     const originalConversation = provider === 'codex' ? codexStatusConversation((await rpc<{read:{text:string}}>(socket,'pane.read',{pane_id:pane.pane_id,source:'recent_unwrapped',lines:120,strip_ansi:true})).read.text) : JSON.parse((await readFile((await Array.fromAsync(new Bun.Glob('sessions/**/*.jsonl').scan({cwd:piHome,absolute:true})))[0], 'utf8')).split('\n')[0]).id;
@@ -103,12 +115,33 @@ try {
     await api(machine, panePath('default', pane.pane_id, 'native'), {body:{action:'release', runtimeId:currentState.runtimeId, conversationId:currentState.conversationId, clientId:'live-test-phone', epoch:currentState.epoch}});
     await rpc(socket, 'agent.prompt', {target:pane.pane_id,text:'Continue on the original desktop.'});
     await until(async()=> {const state=await api<NativeState>(machine,panePath('default',pane.pane_id,'native')); return state.status==='idle' && state.messages.filter(row=>row.role==='user').length>=3 && state.conversationId===originalConversation;});
+    if (process.argv.includes('--restart')) {
+      stage = provider + ' one-click restart';
+      const selected = (await snapshot()).panes.find(row => row.pane_id === pane.pane_id)!;
+      const beforeRestart = await api<NativeState>(machine, panePath('default', pane.pane_id, 'native'));
+      const requestsBeforeRestart = model.requests;
+      await api(machine, panePath('default', pane.pane_id, 'takeover'), { body: { restart: true, runtimeId: beforeRestart.runtimeId, clientId: 'live-test-phone', agent: selected.agent, terminalId: selected.terminal_id, conversation: selected.agent_session?.value } });
+      await until(async () => { const state = await api<TakeoverState>(machine, panePath('default', pane.pane_id, 'takeover')); if (state.phase === 'failed') throw new Error(state.message); return state.phase === 'ready'; }, 300);
+      const afterRestart = await api<NativeState>(machine, panePath('default', pane.pane_id, 'native'));
+      if (afterRestart.runtimeId === beforeRestart.runtimeId || afterRestart.conversationId !== beforeRestart.conversationId) throw new Error('Restart did not replace the adapter while preserving its exact conversation.');
+      if (afterRestart.model !== beforeRestart.model || afterRestart.reasoningEffort !== beforeRestart.reasoningEffort || afterRestart.mode !== beforeRestart.mode) throw new Error('Restart changed the original model, reasoning or mode.');
+      if (model.requests !== requestsBeforeRestart) throw new Error('Restart replayed an agent prompt.');
+      if ((await snapshot()).panes.find(row => row.pane_id === pane.pane_id)?.terminal_id !== selected.terminal_id) throw new Error('Restart replaced the terminal.');
+      await api(machine, panePath('default', pane.pane_id, 'native'), { body: { action: 'prompt', runtimeId: afterRestart.runtimeId, conversationId: afterRestart.conversationId, clientId: 'live-test-phone', epoch: afterRestart.epoch, text: 'Continue after replacing the mherdr adapter.' } });
+      await until(async () => (await api<NativeState>(machine, panePath('default', pane.pane_id, 'native'))).status === 'idle');
+      console.log(JSON.stringify({ provider, oneClickRestart: true, sameConversation: true, sameTerminal: true, noPromptReplay: true, newAdapterAcceptsPrompt: true }));
+    }
     console.log(JSON.stringify({ provider, desktopAfterReturn: true, oneClick: true, sameConversation: true, sameProcess: provider === 'pi', sameDaemon: provider === 'codex', sameTerminal: true, phoneTurn: true }));
   }
 } catch (error) {
   console.error('Failed isolated takeover at stage: ' + stage);
   const state = await snapshot().catch(() => undefined);
   console.error(JSON.stringify(state?.panes.map(row => ({ agent: row.agent, status: row.agent_status, reference: !!row.agent_session }))));
+  for (const file of await readdir(join(stateDir, 'native')).catch(() => [])) {
+    if (!/^[a-f\d-]{36}\.json$/.test(file)) continue;
+    const record = JSON.parse(await readFile(join(stateDir, 'native', file), 'utf8'));
+    console.error(JSON.stringify({ provider: record.provider, socketMatches: record.herdrSocket === socket, paneId: record.paneId, terminalMatches: state?.panes.some(row => row.terminal_id === record.terminalId), pid: record.pid }));
+  }
   for (const pane of state?.panes ?? []) console.error((await rpc<{read:{text:string}}>(socket,'pane.read',{pane_id:pane.pane_id,source:'recent_unwrapped',lines:14,strip_ansi:true})).read.text);
   throw error;
 } finally {

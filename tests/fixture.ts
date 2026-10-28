@@ -37,6 +37,7 @@ export async function createFixture() {
   let foregroundPid = 100;
   let snapshotError = false;
   let screen = '原始终端输出';
+  let workspaceSequence = 3, terminalSequence = 3;
   const sockets = new Set<Socket>();
   const socketPath = join(directory, 'herdr.sock');
   const api = createServer(socket => {
@@ -55,6 +56,23 @@ export async function createFixture() {
         if (snapshotError) error = { code: 'fixture_unavailable', message: 'Fixture temporarily unavailable' };
         else result = { type: 'session_snapshot', snapshot };
       }
+      else if (method === 'workspace.create' || method === 'tab.create' || method === 'pane.split') {
+        const workspaceId = method === 'workspace.create' ? 'w' + ++workspaceSequence : params.workspace_id;
+        let workspace = snapshot.workspaces.find(row => row.workspace_id === workspaceId);
+        if (!workspace) { workspace = { workspace_id: workspaceId, label: params.label, number: workspaceSequence, agent_status: 'unknown' }; snapshot.workspaces.push(workspace); }
+        const tabNumber = snapshot.tabs.filter(row => row.workspace_id === workspaceId).length + 1;
+        const source = snapshot.panes.find(row => row.pane_id === params.target_pane_id);
+        const tab = method === 'pane.split' ? snapshot.tabs.find(row => row.tab_id === source?.tab_id)! : { tab_id: `${workspaceId}:t${tabNumber}`, workspace_id: workspaceId, label: params.label, number: tabNumber };
+        if (method !== 'pane.split') snapshot.tabs.push(tab);
+        const paneNumber = snapshot.panes.filter(row => row.workspace_id === workspaceId).length + 1;
+        const created = { pane_id: `${workspaceId}:p${paneNumber}`, workspace_id: workspaceId, tab_id: tab.tab_id, terminal_id: 'term-' + ++terminalSequence, agent_status: 'unknown' as const, revision: 1, focused: false, cwd: params.cwd };
+        snapshot.panes.push(created);
+        if (!workspace.active_tab_id) workspace.active_tab_id = tab.tab_id;
+        result = method === 'pane.split' ? { pane: created } : { workspace, tab, root_pane: created };
+      }
+      else if (method === 'workspace.rename') { const value = snapshot.workspaces.find(row => row.workspace_id === params.workspace_id); if (value) value.label = params.label; result = {}; }
+      else if (method === 'tab.rename') { const value = snapshot.tabs.find(row => row.tab_id === params.tab_id); if (value) value.label = params.label; result = {}; }
+      else if (method === 'pane.rename') { if (pane) pane.label = params.label; result = {}; }
       else if (method === 'pane.process_info') result = { process_info: { foreground_processes: [{ pid: foregroundPid, argv: ['pi'] }] } };
       else if (method === 'pane.read') result = { type: 'pane_read', read: { text: screen, revision: 1, truncated: false } };
       else if (method === 'agent.prompt') {
@@ -77,6 +95,6 @@ export async function createFixture() {
     setScreen(text: string) { screen = text; },
     setForegroundPid(pid: number) { foregroundPid = pid; },
     setSnapshotError(value: boolean) { snapshotError = value; },
-    async close() { bridge.stop(true); for (const socket of sockets) socket.destroy(); api.close(); await rm(directory, { recursive: true, force: true }); },
+    async close() { await bridge.stop(true); for (const socket of sockets) socket.destroy(); api.close(); await rm(directory, { recursive: true, force: true }); },
   };
 }

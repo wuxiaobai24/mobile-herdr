@@ -1,6 +1,6 @@
 # Beta 发布流程
 
-当前版本：**0.2.2-beta.8**。源码公开，运行包以 GitHub prerelease 分发；每人自行部署自己的开发机。仍先以少量朋友验收真实设备行为，不需要公共 bridge、账号系统或手机应用商店。
+当前开发版本：**0.2.2-beta.12**。源码公开，运行包以 GitHub prerelease 分发；每人自行部署自己的开发机。仍先以少量朋友验收真实设备行为，不需要公共 bridge、账号系统或手机应用商店。
 
 ## 交付物
 
@@ -26,9 +26,17 @@ beta.7 增加首次一键接入现有 Codex / Pi、Chat 与终端控制权切换
 
 beta.8 增加 slash 候选、模型 / 思考强度快捷选择、停止与计划模式、终端修饰键 / 方向面板 / 粘贴预览，以及本机和 SSH 项目文件浏览、预览与下载；修复运行版本与源码版本不一致导致更新失败。Android versionCode 递增至3，使用原签名，系统另存为通过原生依赖补丁与源码编译修复。
 
+beta.9 增加会话技能选择、图片和文件附件、聊天图片预览、工具调用详情、终端触摸历史、聊天顶部自动分页，以及 Herdr 工作区 / 标签页创建、重命名和分屏。原生详情提供显式“用新版 mherdr 重启”，等待空闲后恢复准确原对话并保留草稿。Android versionCode 递增至4，沿用原签名。当前只完成本机升级；公开发布仍须单独执行发布流程。
+
+beta.10 增加手机 tab / pane 直接导航、标签名搜索与落点记忆、跨开发机 / session 的 pane 收件箱、完成未读，以及绑定当前输入权的下一轮消息队列。队列断线或 bridge 重启后暂停，送达不明时不自动重试。旧适配器须由用户显式更新后才能使用下一轮投递。Android versionCode 递增至5，沿用原签名。仍是本机候选版本，未公开发布。
+
+beta.11 修复聊天项目文件链接下载，统一下载进度、取消和真实保存结果；Android 分块接收并写入缓存，版本面板可通过鉴权接口直接下载本机 APK，公开发布页明确交由浏览器处理。Android versionCode 递增至6，沿用原签名。
+
+beta.12 增加 `mherdr omp` 启动 Oh My Pi 与手机控制，保留原进程和准确会话身份；不支持热接管已有普通 OMP、手机端重启适配器或下一轮自动队列。Android versionCode 递增至7，沿用原签名。发布说明见 [beta.12 草稿](release-notes-beta.12.md)。
+
 产物位于 `artifacts/releases/`：
 
-- `mobile-herdr-0.2.2-beta.8.tar.gz`：预构建 Web、bundled bridge / 启动器 / Codex host / Pi 扩展、命令入口、内测指南、第三方许可文件。
+- `mobile-herdr-0.2.2-beta.12.tar.gz`：预构建 Web、bundled bridge / 启动器 / Codex host / Pi 扩展、命令入口、内测指南、第三方许可文件。
 - 同名 `.tar.gz.sha256`：压缩包 SHA-256。
 - 同名 `.tar.gz.verification.json`：本机验证的平台、版本、包摘要和实际通过项目。它是**打包冒烟测试**，不等同于真实 Herdr、真实 provider、真机或跨平台认证。
 
@@ -36,7 +44,7 @@ beta.8 增加 slash 候选、模型 / 思考强度快捷选择、停止与计划
 
 构建使用 [Bun bundler](https://bun.sh/docs/bundler)；保持现有相对入口路径，将运行依赖打进 JS 包。Pi 扩展以 Node 目标构建。选择此方式是为了保留 Bun PTY、独立 Codex host 和 Pi 进程内加载的现有语义；当前不做单个本地可执行文件或 Docker 镜像。朋友仍须自己安装 Bun 与 Herdr。0.2.2-beta.6 另附 `server/ssh-worker.bundle.js`，供 SSH stdin 临时执行；远端无需安装本项目，但需 Bun。打包冒烟测试显式关闭真实机器发现，避免读取或连接测试者的 SSH hosts。
 
-Android 另运行 `bun run build:android`，并在专用模拟器上执行 `MOBILE_HERDR_ANDROID_SERIAL=emulator-... bun run test:android`。将验证后的 APK 复制为 `mobile-herdr-0.2.2-beta.8.apk`，为此文件名生成 `.sha256`，随 release 上传；签名密钥和密码绝不上传。源码的 `artifacts/android/` 仍保持忽略。
+Android 另运行 `bun run build:android`，并在专用模拟器上执行 `MOBILE_HERDR_ANDROID_SERIAL=emulator-... bun run test:android`。将验证后的 APK 复制为 `mobile-herdr-0.2.2-beta.12.apk`，为此文件名生成 `.sha256`，随 release 上传；签名密钥和密码绝不上传。源码的 `artifacts/android/` 仍保持忽略。
 
 ## 发出前
 

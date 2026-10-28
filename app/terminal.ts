@@ -46,6 +46,8 @@ let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let heartbeat: ReturnType<typeof setInterval> | undefined;
 let historyRequest: AbortController | undefined;
 let historyText = '', selectedHistory = '', matchIndex = 0;
+let historyOffset = 0, scrollRemainder = 0, inertia = 0;
+function stopInertia(): void { cancelAnimationFrame(inertia); inertia = 0; }
 function rememberSelection(): void {
   const selection = window.getSelection();
   if (selection?.anchorNode && historyContent.contains(selection.anchorNode)) selectedHistory = selection.toString();
@@ -98,22 +100,25 @@ function resize(): void {
 new ResizeObserver(resize).observe(surface);
 function scrollState(): void {
   const buffer = terminal.buffer.active;
-  latest.hidden = !history.hidden || buffer.viewportY >= buffer.baseY;
+  latest.hidden = !history.hidden ? history.dataset.swipe !== 'true' : buffer.viewportY >= buffer.baseY;
 }
 terminal.onScroll(scrollState);
 terminal.onWriteParsed(scrollState);
 function hideHistory(): void {
+  stopInertia(); historyOffset = 0; scrollRemainder = 0;
   historyRequest?.abort(); historyRequest = undefined;
   history.hidden = true; surface.hidden = false; toolbar.hidden = false; keys.hidden = false;
   historyButton.setAttribute('aria-pressed', 'false'); inputState();
   resize(); scrollState();
 }
-async function showHistory(): Promise<void> {
+async function showHistory(swipe = false): Promise<void> {
   if (!credentials) return;
   controls.hide();
   const wasOpen = !history.hidden;
   const oldTop = historyContent.scrollTop;
-  history.hidden = false; surface.hidden = true; latest.hidden = true; toolbar.hidden = true; keys.hidden = true;
+  historyOffset = 0;
+  history.dataset.swipe = String(swipe);
+  history.hidden = false; surface.hidden = true; latest.hidden = !swipe; toolbar.hidden = !swipe; keys.hidden = !swipe;
   terminal.blur(); keyboard.disabled = true;
   controls.setEnabled(false);
   historyButton.setAttribute('aria-pressed', 'true'); historyNote.textContent = '读取历史…';
@@ -130,10 +135,13 @@ async function showHistory(): Promise<void> {
     if (request.signal.aborted || credentials !== target) return;
     historyText = result.read?.text || '暂无终端输出。'; renderHistory();
     historyNote.textContent = result.read?.truncated ? '最近 2000 行 · 可搜索与复制' : '终端历史 · 滑动查看、选择复制';
-    historyContent.scrollTop = wasOpen ? oldTop : historyContent.scrollHeight;
+    historyContent.scrollTop = (wasOpen ? oldTop : historyContent.scrollHeight - historyContent.clientHeight) + historyOffset;
   } catch (error) {
     if (request.signal.aborted) return;
     historyNote.textContent = error instanceof Error ? error.message : '历史读取失败，请重试。';
+    if (swipe) { history.dataset.swipe = 'false'; toolbar.hidden = true; keys.hidden = true; latest.hidden = true; }
+  } finally {
+    if (historyRequest === request) historyRequest = undefined;
   }
 }
 function start(reset = true): void {
@@ -216,40 +224,74 @@ function browse(lines: number): void {
     if (lines < 0) void showHistory();
   } else { terminal.scrollLines(lines); scrollState(); }
 }
+function browsePixels(pixels: number): void {
+  if (!history.hidden) {
+    if (historyRequest) historyOffset += pixels;
+    historyContent.scrollTop += pixels;
+    return;
+  }
+  if (terminal.buffer.active.type === 'alternate' || terminal.modes.mouseTrackingMode !== 'none' || terminal.buffer.active.baseY === 0) {
+    if (pixels < 0) { void showHistory(true); historyOffset += pixels; }
+    return;
+  }
+  const lineHeight = surface.querySelector('.xterm-rows')?.getBoundingClientRect().height;
+  const row = lineHeight ? lineHeight / terminal.rows : defaultAppearance.terminalSize * 1.2;
+  scrollRemainder += pixels;
+  const lines = Math.trunc(scrollRemainder / row);
+  if (lines) { terminal.scrollLines(lines); scrollRemainder -= lines * row; scrollState(); }
+}
 terminal.attachCustomWheelEventHandler(event => {
   if (event.ctrlKey || event.metaKey) return false;
   const delta = event.deltaY * (event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? surface.clientHeight : 1);
   if (delta) { event.preventDefault(); browse(Math.sign(delta) * Math.max(1, Math.round(Math.abs(delta) / 20))); }
   return false;
 });
-let touch: { y: number; startY: number; startX: number; moved: boolean; remainder: number } | undefined;
+let touch: { y: number; startY: number; startX: number; moved: boolean; time: number; velocity: number } | undefined;
 surface.addEventListener('touchstart', event => {
+  stopInertia(); scrollRemainder = 0;
   if (event.touches.length !== 1) { touch = undefined; return; }
-  const point = event.touches[0]; touch = { y: point.clientY, startY: point.clientY, startX: point.clientX, moved: false, remainder: 0 };
+  const point = event.touches[0]; touch = { y: point.clientY, startY: point.clientY, startX: point.clientX, moved: false, time: performance.now(), velocity: 0 };
   event.preventDefault(); event.stopImmediatePropagation();
 }, { capture: true, passive: false });
-surface.addEventListener('touchmove', event => {
+// Keep the initiating gesture when history replaces the live terminal surface.
+document.addEventListener('touchmove', event => {
   if (!touch || event.touches.length !== 1) return;
   event.preventDefault(); event.stopImmediatePropagation();
   const point = event.touches[0];
-  if (Math.abs(point.clientY - touch.startY) > 8 || Math.abs(point.clientX - touch.startX) > 8) touch.moved = true;
+  if (!touch.moved && Math.abs(point.clientY - touch.startY) < 8 && Math.abs(point.clientX - touch.startX) < 8) return;
+  touch.moved = true;
   const distance = touch.y - point.clientY;
-  touch.y = point.clientY; touch.remainder += distance;
-  const lines = Math.trunc(touch.remainder / 20);
-  if (lines) { touch.remainder -= lines * 20; browse(lines); }
+  const now = performance.now();
+  touch.velocity = distance / Math.max(8, now - touch.time);
+  touch.time = now; touch.y = point.clientY;
+  browsePixels(distance);
 }, { capture: true, passive: false });
-surface.addEventListener('touchend', event => { if (touch && !touch.moved && connected && inputWritable && history.hidden) terminal.focus(); touch = undefined; event.stopImmediatePropagation(); }, { capture: true });
-surface.addEventListener('touchcancel', () => { touch = undefined; }, { capture: true });
+document.addEventListener('touchend', event => {
+  if (!touch) return;
+  if (!touch.moved && connected && inputWritable && history.hidden) terminal.focus();
+  else if (touch.moved && performance.now() - touch.time < 80) {
+    let velocity = Math.max(-2.5, Math.min(2.5, touch.velocity)), previous = performance.now();
+    const glide = (now: number): void => {
+      const elapsed = Math.min(32, now - previous); previous = now;
+      browsePixels(velocity * elapsed); velocity *= Math.exp(-elapsed / 180);
+      if (Math.abs(velocity) > 0.02) inertia = requestAnimationFrame(glide); else inertia = 0;
+    };
+    inertia = requestAnimationFrame(glide);
+  }
+  touch = undefined; event.stopImmediatePropagation();
+}, { capture: true });
+document.addEventListener('touchstart', event => { if (!surface.contains(event.target as Node)) stopInertia(); }, { capture: true });
+document.addEventListener('touchcancel', () => { touch = undefined; stopInertia(); }, { capture: true });
 terminal.attachCustomKeyEventHandler(event => {
   if (event.type === 'keydown' && event.shiftKey && ['PageUp', 'PageDown'].includes(event.key)) {
     event.preventDefault(); browse((event.key === 'PageUp' ? -1 : 1) * terminal.rows); return false;
   }
   return true;
 });
-historyButton.onclick = () => { if (history.hidden) void showHistory(); else hideHistory(); };
+historyButton.onclick = () => { if (history.hidden || history.dataset.swipe === 'true') void showHistory(); else hideHistory(); };
 document.getElementById('close-history')!.onclick = hideHistory;
 document.getElementById('refresh-history')!.onclick = () => void showHistory();
-latest.onclick = () => { terminal.scrollToBottom(); scrollState(); };
+latest.onclick = () => { if (!history.hidden) hideHistory(); terminal.scrollToBottom(); scrollState(); };
 keyboard.disabled = true;
 keyboard.onclick = () => { if (connected && inputWritable && history.hidden) terminal.focus(); };
 document.getElementById('reconnect')!.onclick = () => start(false);

@@ -1,8 +1,9 @@
 export {};
 // An isolated app-server peer: exercises the real broker transport, never a user's agent.
-const thread = { id: 'test-thread-original', turns: [] as any[] };
+const thread = { id: 'test-thread-original', cwd: '/fixture/project', turns: [] as any[] };
 let turn = 0;
 let request: number | undefined;
+let legacyHistory = false;
 function send(frame: object): void { process.stdout.write(JSON.stringify(frame) + '\n'); }
 function event(method: string, params: object): void { send({ method, params: { threadId: thread.id, ...params } }); }
 let buffer = '';
@@ -18,20 +19,29 @@ process.stdin.on('data', chunk => {
       continue;
     }
     let result: any = {};
+    if (frame.method === 'fixture/legacyHistory') { thread.turns = frame.params.turns; legacyHistory = true; }
     if (frame.method === 'initialize') result = { userAgent: 'isolated-codex-fixture', platformFamily: 'unix', platformOs: 'linux' };
-    if (['thread/start', 'thread/resume'].includes(frame.method)) result = { thread: frame.params?.ephemeral ? { ...thread, id: 'title-helper', ephemeral: true } : thread, model: 'fixture-model' };
-    if (frame.method === 'thread/turns/list') result = { data: thread.turns, nextCursor: null };
+    if (['thread/start', 'thread/resume'].includes(frame.method)) result = { thread: frame.params?.ephemeral ? { ...thread, id: 'title-helper', ephemeral: true } : legacyHistory ? { ...thread, turns: [] } : thread, model: 'fixture-model' };
+    if (frame.method === 'thread/turns/list') {
+      if (legacyHistory) { send({ id: frame.id, error: { code: -32601, message: 'method not found' } }); continue; }
+      result = { data: thread.turns, nextCursor: null };
+    }
+    if (frame.method === 'thread/read') result = { thread };
     if (frame.method === 'model/list') result = { data: [
       { id: 'fixture-model', model: 'fixture-model', displayName: 'Fixture Model', defaultReasoningEffort: 'medium', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'medium' }, { reasoningEffort: 'high' }] },
       { id: 'fixture-fast', model: 'fixture-fast', displayName: 'Fixture Fast', supportedReasoningEfforts: [] },
     ] };
+    if (frame.method === 'skills/list') result = { data: [{ cwd: '/fixture/project', skills: [
+      { name: 'fixture-skill', path: '/fixture/skills/fixture-skill/SKILL.md', description: '审查移动端交互与布局', enabled: true, interface: { displayName: '移动端审查' } },
+      { name: 'disabled-skill', path: '/fixture/skills/disabled/SKILL.md', enabled: false },
+    ] }] };
     if (frame.method === 'thread/compact/start') event('fixture/compacted', {});
     if (frame.method === 'config/read' && frame.params?.largeFixture) result = { content: 'x'.repeat(17 * 1024 * 1024) };
     if (frame.method === 'turn/start' || frame.method === 'turn/steer') {
-      event('fixture/turnOptions', { model: frame.params.model, effort: frame.params.effort, collaborationMode: frame.params.collaborationMode });
+      event('fixture/turnOptions', { model: frame.params.model, effort: frame.params.effort, collaborationMode: frame.params.collaborationMode, input: frame.params.input });
       if (frame.method === 'turn/start') { turn++; event('turn/started', { turn: { id: `turn-${turn}`, status: 'inProgress' } }); }
       const text = frame.params.input[0].text;
-      event('item/completed', { item: { id: 'user-' + frame.id, type: 'userMessage', content: [{ type: 'text', text }] } });
+      event('item/completed', { item: { id: 'user-' + frame.id, type: 'userMessage', content: frame.params.input.filter((row: any) => ['text', 'localImage', 'image'].includes(row.type)) } });
       event('item/agentMessage/delta', { itemId: 'reply-' + frame.id, delta: '已收到：' + text });
       if (text.includes('文件审批')) {
         request = 900 + turn;

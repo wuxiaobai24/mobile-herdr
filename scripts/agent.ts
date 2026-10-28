@@ -10,11 +10,12 @@ import type { NativeState } from '../shared/native';
 import type { Pane, Snapshot } from '../shared/protocol';
 import { isDesktopReclaim } from '../shared/terminal-keys';
 import { acquireLaunchLock, clearStaleLaunchLock, launchLockPath, launchLockState } from './agent-lock';
-import { assertSessionAvailable, codexOptions, piResumeId, type CodexOptions } from './agent-options';
+import { assertSessionAvailable, codexOptions, piResumeId, ompResumeId, type CodexOptions } from './agent-options';
 import { version } from '../package.json';
 
 const HELP = `mherdr codex [参数]  在当前 Herdr pane 启动或接回 Codex
 mherdr pi [参数]     在当前 Herdr pane 启动 Pi
+mherdr omp [参数]    在当前 Herdr pane 启动 Oh My Pi
 mherdr status [--json]  查看当前 pane 的连接和控制权
 mherdr doctor [--json]  检查 CLI、Herdr 和启动锁
 mherdr doctor --clear-stale-lock  清理已退出启动器的锁
@@ -38,8 +39,8 @@ async function context(): Promise<Context> {
   return { socket, pane, snapshot, identity, directory, lock: launchLockPath(directory, identity) };
 }
 
-function binary(provider: 'codex' | 'pi'): string {
-  const value = process.env[provider === 'codex' ? 'MOBILE_HERDR_CODEX_BINARY' : 'MOBILE_HERDR_PI_BINARY'] ?? provider;
+function binary(provider: 'codex' | 'pi' | 'omp'): string {
+  const value = process.env[`MOBILE_HERDR_${provider.toUpperCase()}_BINARY`] ?? provider;
   const path = Bun.which(value);
   if (!path) throw new Error(`找不到 ${provider}。请先安装原 CLI，或设置 MOBILE_HERDR_${provider.toUpperCase()}_BINARY。`);
   return path;
@@ -68,7 +69,7 @@ function print(value: object, json: boolean): void {
 
 async function doctor(args: string[]): Promise<void> {
   const checks: Record<string, unknown> = { version, bun: Bun.version };
-  for (const provider of ['codex', 'pi'] as const) {
+  for (const provider of ['codex', 'pi', 'omp'] as const) {
     try { checks[provider] = binary(provider); } catch { checks[provider] = '未找到 CLI'; }
   }
   const ctx = await context().catch(error => { checks.herdr = error.message; return undefined; });
@@ -88,6 +89,12 @@ async function waitForChild(child: Bun.Subprocess): Promise<number> {
   finally { process.off('SIGTERM', terminate); }
 }
 
+async function verifiedRestore(ctx: Context, provider: 'pi' | 'codex', conversation?: string): Promise<boolean> {
+  if (!conversation || process.env.MOBILE_HERDR_VERIFIED_RESTORE !== conversation || ctx.pane.agent !== provider || ctx.pane.agent_session?.value && ctx.pane.agent_session.value !== conversation) return false;
+  const parent = (await readFile(`/proc/${process.ppid}/cmdline`, 'utf8').catch(() => '')).split('\0');
+  return parent.includes(resolve(import.meta.dir, 'takeover-launch.ts'));
+}
+
 async function launchPi(ctx: Context, args: string[], command: string): Promise<number> {
   const session = await piResumeId(args);
   assertSessionAvailable(ctx.snapshot.panes, ctx.pane, session);
@@ -96,12 +103,31 @@ async function launchPi(ctx: Context, args: string[], command: string): Promise<
     const id = await piResumeId(['--session', other.agent_session.value]);
     if (id === session) throw new Error('此 Pi 会话仍在另一个 Herdr pane 中运行。请先退出原 CLI。');
   }
-  if (ctx.pane.agent || await registered(ctx)) throw new Error('此 pane 已有 agent 或原生连接。请先退出旧 CLI，或在新 pane 启动 Pi。');
+  if (await registered(ctx) || ctx.pane.agent && !await verifiedRestore(ctx, 'pi', session)) throw new Error('此 pane 已有 agent 或原生连接。请先退出旧 CLI，或在新 pane 启动 Pi。');
   const child = Bun.spawn([command, '--extension', resolve(import.meta.dir, '../plugins/pi/mobile-herdr.ts'), ...args], {
     stdin: 'inherit', stdout: 'inherit', stderr: 'inherit',
-    env: { ...process.env, MOBILE_HERDR_NATIVE_DIRECTORY: ctx.directory, MOBILE_HERDR_NATIVE_IDENTITY: JSON.stringify(ctx.identity) },
+    env: { ...process.env, MOBILE_HERDR_PROVIDER: 'pi', MOBILE_HERDR_PI_BINARY: command, MOBILE_HERDR_PI_RESTART_ARGS: JSON.stringify(args), MOBILE_HERDR_NATIVE_DIRECTORY: ctx.directory, MOBILE_HERDR_NATIVE_IDENTITY: JSON.stringify(ctx.identity) },
   });
   return waitForChild(child);
+}
+
+async function launchOmp(ctx: Context, args: string[], command: string): Promise<number> {
+  const session = await ompResumeId(args);
+  assertSessionAvailable(ctx.snapshot.panes, ctx.pane, session);
+  if (session) for (const other of ctx.snapshot.panes) {
+    if (other.terminal_id === ctx.pane.terminal_id || other.agent !== 'omp' || other.agent_session?.kind !== 'path') continue;
+    if (await piResumeId(['--session', other.agent_session.value]) === session) throw new Error('此 OMP 会话仍在另一个 Herdr pane 中运行。');
+  }
+  if (await registered(ctx) || ctx.pane.agent) throw new Error('此 pane 已有 agent 或原生连接。请在新 pane 启动 OMP。');
+  const overlay = join(ctx.directory, `omp-${process.pid}.yaml`);
+  await writeFile(overlay, 'autoResume: false\n', { mode: 0o600, flag: 'wx' });
+  try {
+    const child = Bun.spawn([command, ...args, '--config', overlay, '--extension', resolve(import.meta.dir, '../plugins/pi/mobile-herdr.ts')], {
+      stdin: 'inherit', stdout: 'inherit', stderr: 'inherit',
+      env: { ...process.env, MOBILE_HERDR_PROVIDER: 'omp', MOBILE_HERDR_NATIVE_DIRECTORY: ctx.directory, MOBILE_HERDR_NATIVE_IDENTITY: JSON.stringify(ctx.identity) },
+    });
+    return await waitForChild(child);
+  } finally { await unlink(overlay).catch(() => {}); }
 }
 
 async function registered(ctx: Context): Promise<NativeRecord | undefined> {
@@ -144,7 +170,7 @@ async function launchCodex(ctx: Context, args: string[], options: CodexOptions, 
   assertSessionAvailable(ctx.snapshot.panes, ctx.pane, options.command === 'resume' ? options.resumeId : undefined);
   let record = await registered(ctx);
   if (record && record.provider !== 'codex') throw new Error('此 pane 已有 Pi 原生连接。请先退出 Pi，或在新 pane 启动 Codex。');
-  if (!record && ctx.pane.agent) throw new Error('此 pane 已有 agent。请先结束当前任务并退出旧 CLI，再启用原生连接。');
+  if (!record && ctx.pane.agent && !await verifiedRestore(ctx, 'codex', options.resumeId)) throw new Error('此 pane 已有 agent。请先结束当前任务并退出旧 CLI，再启用原生连接。');
   const created = !record;
   record ??= await startCodex(ctx, options, command);
   try { return await attachCodex(ctx, record, args, options, command, created); }
@@ -204,9 +230,9 @@ async function main(): Promise<void> {
     if (args.some(arg => !allowed.includes(arg))) throw new Error('参数无效，请运行 mherdr --help 查看用法。');
   }
   if (provider === 'doctor') { await doctor(args); return; }
-  if (!['codex', 'pi', 'stop', 'status'].includes(provider)) throw new Error(HELP);
+  if (!['codex', 'pi', 'omp', 'stop', 'status'].includes(provider)) throw new Error(HELP);
   const beforeSeparator = args.slice(0, args.indexOf('--') < 0 ? args.length : args.indexOf('--'));
-  if ((provider === 'codex' || provider === 'pi') && beforeSeparator.some(arg => ['--help', '-h', '--version', '-V', '-v'].includes(arg))) {
+  if ((provider === 'codex' || provider === 'pi' || provider === 'omp') && beforeSeparator.some(arg => ['--help', '-h', '--version', '-V', '-v'].includes(arg))) {
     process.exitCode = await waitForChild(Bun.spawn([binary(provider), ...args], { stdin: 'inherit', stdout: 'inherit', stderr: 'inherit', env: { ...process.env } })); return;
   }
   const options = provider === 'codex' ? codexOptions(args) : undefined;
@@ -217,11 +243,11 @@ async function main(): Promise<void> {
     if (!record) throw new Error('当前 pane 没有原生 agent。');
     await nativeCall(record.endpoint, { method: 'shutdown' }); console.log('已请求停止当前 pane 的原生 agent。'); return;
   }
-  const command = binary(provider as 'codex' | 'pi');
+  const command = binary(provider as 'codex' | 'pi' | 'omp');
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('请在交互终端运行 mherdr；脚本或 RPC 模式请使用原 CLI。');
   await mkdir(ctx.directory, { recursive: true, mode: 0o700 });
   const unlock = await acquireLaunchLock(ctx.lock);
-  try { process.exitCode = provider === 'pi' ? await launchPi(ctx, args, command) : await launchCodex(ctx, args, options!, command); }
+  try { process.exitCode = provider === 'omp' ? await launchOmp(ctx, args, command) : provider === 'pi' ? await launchPi(ctx, args, command) : await launchCodex(ctx, args, options!, command); }
   finally { await unlock(); }
 }
 

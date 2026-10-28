@@ -5,6 +5,34 @@ import { NativeController } from '../server/native/controller';
 import { api, panePath } from '../shared/client';
 import type { Machine } from '../shared/protocol';
 import type { TakeoverState } from '../shared/takeover';
+import { createNativeFixture } from './native-fixture';
+import { piRestartArgs } from '../server/native/restart';
+
+test('explicit restart waits for idle, is cancellable, and does not accept another runtime or owner', async () => {
+  const f = await createNativeFixture();
+  const pane = f.snapshot.panes[0];
+  const machine = { id: 'test', name: 'test', url: f.url, token: f.config.token };
+  const path = panePath('default', pane.pane_id, 'takeover');
+  const body = { restart: true, runtimeId: f.control.state.runtimeId, clientId: 'restart-test-phone', agent: pane.agent, terminalId: pane.terminal_id, conversation: pane.agent_session?.value };
+  try {
+    f.control.state.status = 'working';
+    await api(machine, path, { body });
+    await until(async () => (await api<TakeoverState>(machine, path)).phase === 'waiting');
+    await api(machine, path, { body: { ...body, cancel: true } });
+    await until(async () => (await api<TakeoverState>(machine, path)).phase === 'cancelled');
+    expect(f.control.state.connected).toBe(true);
+    expect(f.calls.every(row => ['session.snapshot', 'pane.process_info'].includes(row.method))).toBe(true);
+    await api(machine, path, { body: { ...body, runtimeId: 'stale-runtime' } });
+    await until(async () => (await api<TakeoverState>(machine, path)).phase === 'failed');
+    expect(f.control.state.connected).toBe(true);
+  } finally { await f.close(); }
+});
+
+test('Pi restart keeps supported flags and never replays a positional prompt', () => {
+  expect(piRestartArgs(['--model', 'fixture/model', '--session', 'old', '--offline', '--extension', '/old/mobile-herdr.ts'], 'exact-id')).toEqual(['--session', 'exact-id', '--model', 'fixture/model', '--offline']);
+  expect(() => piRestartArgs(['do the old task again'], 'exact-id')).toThrow('无法安全恢复');
+  expect(() => piRestartArgs(['--no-extensions'], 'exact-id')).toThrow('无法安全恢复');
+});
 
 async function until(check: () => Promise<boolean>): Promise<void> { for (let i = 0; i < 40; i++) { if (await check()) return; await Bun.sleep(30); } throw new Error('Takeover did not settle.'); }
 test('setup claims an existing exact native session once; another phone cannot steal it', async () => {

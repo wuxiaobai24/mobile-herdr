@@ -5,7 +5,8 @@ import { ArrowLeft, ChevronRight, Download, File, Folder, RefreshCw, Search, X }
 import type { Machine } from '../../shared/protocol';
 import { api } from '../../shared/client';
 import { filePath, fileSize, type FileListing, type FilePreview, type ProjectFile } from '../../shared/files';
-import { saveProjectFile } from '../file-transfer';
+import { useFileDownload } from '../useFileDownload';
+import { DownloadStatus } from './DownloadStatus';
 import { mono, useTheme } from '../theme';
 
 interface Props { machine: Machine; session: string; pane: string; onClose: () => void }
@@ -17,7 +18,10 @@ export function FileBrowser({ machine, session, pane, onClose }: Props): React.J
   const [listing, setListing] = useState<FileListing>(), [preview, setPreview] = useState<FilePreview>();
   const [query, setQuery] = useState(''), [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(true), [error, setError] = useState(''), [notice, setNotice] = useState('');
-  const [downloading, setDownloading] = useState('');
+  const transfer = useFileDownload();
+  const [downloadName, setDownloadName] = useState('');
+  const [downloadPath, setDownloadPath] = useState('');
+  const downloading = transfer.busy ? downloadPath : '';
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
     let closed = false;
@@ -39,12 +43,8 @@ export function FileBrowser({ machine, session, pane, onClose }: Props): React.J
   }
   async function download(entry: ProjectFile): Promise<void> {
     if (downloading) return;
-    setDownloading(entry.path); setError(''); setNotice('');
-    try {
-      const saved = await saveProjectFile(machine, filePath(session, pane, entry.path, root.current, 'download'), entry.name);
-      if (mounted.current) setNotice(saved ? '文件已交给系统保存。' : '已取消保存。');
-    } catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : '下载失败，请检查连接后重试。'); }
-    finally { if (mounted.current) setDownloading(''); }
+    setDownloadPath(entry.path); setDownloadName(entry.name); setError(''); setNotice('');
+    await transfer.start(machine, filePath(session, pane, entry.path, root.current, 'download'), entry.name);
   }
   function icon(label: string, run: () => void, child: React.ReactNode, disabled = false): React.JSX.Element {
     return <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled} onPress={run} style={({ pressed }) => ({ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 8, backgroundColor: pressed ? colors.hover : 'transparent', opacity: disabled ? 0.45 : 1 })}>{child}</Pressable>;
@@ -65,6 +65,7 @@ export function FileBrowser({ machine, session, pane, onClose }: Props): React.J
         <Text numberOfLines={1} accessibilityLabel={`当前文件目录 ${root.current ?? ''}/${path}`} style={[styles.muted, { fontSize: 12, paddingBottom: 8 }]}>{path ? './' + path : root.current ?? '项目目录'}</Text>
       </View>}
       {!!error && <View style={{ padding: 12, gap: 8 }}><Text accessibilityRole="alert" style={{ color: colors.red, lineHeight: 21 }}>{error}</Text><Pressable accessibilityRole="button" accessibilityLabel="重试读取文件" onPress={() => setRevision(value => value + 1)} style={[styles.button, styles.secondary]}><RefreshCw size={16} color={colors.text} /><Text style={styles.text}>重试</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel="重新打开项目目录" onPress={() => { root.current = undefined; setSelected(undefined); setPath(''); setRevision(value => value + 1); }} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={styles.muted}>重新打开项目目录</Text></Pressable></View>}
+      <DownloadStatus download={transfer} name={downloadName} />
       {!!notice && <Text accessibilityLiveRegion="polite" style={{ color: colors.accent, padding: 12 }}>{notice}</Text>}
       {busy ? <View style={{ flex: 1, justifyContent: 'center' }}><ActivityIndicator color={colors.accent} /></View> : selected ? <>
         {preview?.kind === 'image' && <Image accessibilityLabel={`图片预览 ${preview.name}`} source={{ uri: preview.uri }} onError={() => setError('图片无法解码，请下载后查看。')} resizeMode="contain" style={{ flex: 1, minHeight: 80, margin: 12 }} />}

@@ -6,6 +6,9 @@ import { BridgeError } from '../rpc';
 import { suppliedChanges } from '../../shared/diff';
 import { version } from '../../package.json';
 import { CODEX_FRAME_BYTES, ndjsonLines } from './ndjson';
+import { dirname, join } from 'node:path';
+import { resolveAttachments, attachmentPrompt } from '../attachments';
+import { messageMedia, uploadedPrompt } from '../../shared/message-media';
 
 type Frame = Record<string, any>;
 type Desktop = ServerWebSocket<{ ready: boolean }>;
@@ -30,6 +33,26 @@ export class CodexRuntime {
   private counter = 0;
   private proxy?: Bun.Server<{ ready: boolean }>;
   private selecting = 0;
+  private skillCwd?: string;
+  private skillRevision = 0;
+
+  private async loadSkills(cwd: string): Promise<void> {
+    const revision = ++this.skillRevision;
+    try {
+      const catalog = await this.call('skills/list', { cwds: [cwd], forceReload: true });
+      if (revision !== this.skillRevision || cwd !== this.skillCwd) return;
+      const rows = (catalog.data ?? []).filter((row: Frame) => row.cwd === cwd);
+      if (!rows.length) throw new Error('Skills catalog unavailable');
+      this.control.state.skills = rows.flatMap((row: Frame) => row.skills ?? [])
+        .filter((row: Frame) => row.enabled !== false && typeof row.name === 'string' && typeof row.path === 'string')
+        .slice(0, 500).map((row: Frame) => ({ name: row.name, path: row.path, description: row.interface?.shortDescription ?? row.description ?? '', title: row.interface?.displayName }));
+      this.control.state.capabilities.skills = true;
+    } catch {
+      if (revision !== this.skillRevision) return;
+      this.control.state.skills = []; this.control.state.capabilities.skills = false;
+    }
+    this.control.changed();
+  }
 
   constructor(readonly control: NativeController, command: string, args: string[] = [], env: NodeJS.ProcessEnv = process.env) {
     const providerEnv = { ...env };
@@ -56,13 +79,15 @@ export class CodexRuntime {
       await this.initialized;
       const threadId = control.state.conversationId;
       if (!threadId) throw new BridgeError('native_not_ready', '对话尚未准备好。', 409);
-      const page = await this.call('thread/turns/list', { threadId, cursor, limit: 5, sortDirection: 'desc', itemsView: 'full' });
-      return { messages: [...(page.data ?? [])].reverse().flatMap((turn: Frame) => (turn.items ?? []).map((item: Frame) => this.itemMessage(item)).filter(Boolean)), nextCursor: page.nextCursor ?? undefined };
+      const page = await this.historyTurns(threadId, cursor);
+      return { messages: page.turns.flatMap(turn => (turn.items ?? []).map((item: Frame) => this.itemMessage(item)).filter(Boolean)), nextCursor: page.nextCursor };
     };
     control.perform = input => this.perform(input);
     control.state.capabilities.compact = true;
     control.state.capabilities.modes = true;
     control.state.capabilities.review = true;
+    control.state.capabilities.attachments = true;
+    control.state.capabilities.idlePrompt = true;
     control.state.ready = false;
     control.beforeClaim = () => {
       if (!control.state.connected || !control.state.conversationId || control.state.ready === false || this.selecting) throw new BridgeError('native_not_ready', '电脑正在准备对话，请稍后再接管。', 409);
@@ -144,6 +169,7 @@ export class CodexRuntime {
   }
   private notification(method: string, p: Frame): void {
     const state = this.control.state;
+    if (method === 'skills/changed' && this.skillCwd) void this.loadSkills(this.skillCwd);
     if (method === 'turn/started') { this.turnId = p.turn.id; state.status = 'working'; state.error = undefined; }
     if (method === 'turn/completed') {
       if (this.turnId === p.turn.id) this.turnId = undefined;
@@ -157,7 +183,7 @@ export class CodexRuntime {
       this.control.message({ id: p.itemId, role: 'tool', toolName: 'fileChange', text: JSON.stringify(p.changes ?? []) });
       for (const request of state.requests) if (this.requests.get(request.id)?.params?.itemId === p.itemId) request.changes = suppliedChanges(p.changes).map(file => ({ path: file.path, diff: file.patch }));
     }
-    if (method === 'item/started' || method === 'item/completed') this.item(p.item);
+    if (method === 'item/started' || method === 'item/completed') this.item({ ...p.item, status: p.item?.status ?? (method === 'item/started' ? 'inProgress' : 'completed') });
     if (method === 'item/agentMessage/delta' || method === 'item/commandExecution/outputDelta') {
       const previous = state.messages.find(row => row.id === p.itemId);
       const tool = method.includes('commandExecution');
@@ -176,13 +202,31 @@ export class CodexRuntime {
   private itemMessage(item: Frame): ChatMessage | undefined {
     if (!item?.id) return;
     let message: ChatMessage;
-    if (item.type === 'userMessage') message = { id: item.id, role: 'user', text: (item.content ?? []).map((row: Frame) => row.text ?? (row.type === 'image' ? '[图片]' : '')).join('\n') };
+    if (item.type === 'userMessage') {
+      const prompt = uploadedPrompt((item.content ?? []).filter((row: Frame) => row.type === 'text').map((row: Frame) => row.text ?? '').join('\n'));
+      const media = [...new Map([...prompt.media, ...messageMedia(item.content)].map(row => [row.attachmentId ?? row.url ?? row.path, row])).values()];
+      message = { id: item.id, role: 'user', text: prompt.text, media };
+    }
     else if (['agentMessage', 'plan'].includes(item.type)) message = { id: item.id, role: 'assistant', text: item.text ?? '' };
     else if (item.type === 'reasoning') return;
-    else message = { id: item.id, role: 'tool', toolName: item.type, text: item.command ?? item.query ?? (item.changes ? JSON.stringify(item.changes) : item.name ?? item.type), output: item.aggregatedOutput ?? (item.result ? JSON.stringify(item.result) : undefined) };
+    else message = { id: item.id, role: 'tool', toolName: item.tool ?? item.name ?? item.type,
+      text: item.command ?? item.query ?? (item.changes ? JSON.stringify(item.changes) : item.arguments ? JSON.stringify(item.arguments) : item.path ?? item.type),
+      output: item.aggregatedOutput ?? (item.result ? JSON.stringify(item.result) : undefined),
+      toolStatus: ['failed', 'declined'].includes(item.status) || item.exitCode ? 'failed' : item.status === 'inProgress' ? 'running' : item.status === 'completed' ? 'completed' : undefined,
+      durationMs: item.durationMs, exitCode: item.exitCode, media: item.type === 'imageView' ? messageMedia([item]) : messageMedia(item.contentItems ?? item.result?.content) };
     return message;
   }
   private item(item: Frame): void { const message = this.itemMessage(item); if (message) this.control.message(message); }
+  private async historyTurns(threadId: string, cursor?: string): Promise<{ turns: Frame[]; nextCursor?: string }> {
+    try {
+      const page = await this.call('thread/turns/list', { threadId, cursor, limit: 5, sortDirection: 'desc', itemsView: 'full' });
+      return { turns: [...(page.data ?? [])].reverse(), nextCursor: page.nextCursor ?? undefined };
+    } catch {
+      const result = await this.call('thread/read', { threadId, includeTurns: true });
+      if (!Array.isArray(result.thread?.turns)) throw new BridgeError('history_unsupported', '当前 Codex 未提供更早记录，请使用新版 mherdr 重启后重试。', 409);
+      return { turns: result.thread.turns };
+    }
+  }
   private async selectThread(result: Frame): Promise<void> {
     const state = this.control.state;
     const thread = result.thread;
@@ -194,6 +238,9 @@ export class CodexRuntime {
       state.messages = []; state.requests = []; state.truncated = false;
     }
     state.conversationId = thread.id; state.model = result.model ?? state.model;
+    this.skillCwd = thread.cwd;
+    state.skills = []; state.capabilities.skills = false; ++this.skillRevision;
+    if (this.skillCwd) await this.loadSkills(this.skillCwd);
     state.reasoningEffort = result.reasoningEffort ?? undefined;
     state.mode = result.collaborationMode?.mode;
     state.context = undefined;
@@ -203,10 +250,10 @@ export class CodexRuntime {
     // Recent versions persist history in pages rather than returning it on resume.
     if (!turns.length) {
       try {
-        const history = await this.call('thread/turns/list', { threadId: thread.id, limit: 5, sortDirection: 'desc', itemsView: 'full' });
+        const history = await this.historyTurns(thread.id);
         if (state.conversationId === thread.id) {
           const live = [...state.messages]; state.messages = [];
-          for (const turn of [...(history.data ?? [])].reverse()) {
+          for (const turn of history.turns) {
             for (const item of turn.items ?? []) this.item(item);
             if (turn.status === 'inProgress') { this.turnId = turn.id; state.status = 'working'; }
           }
@@ -221,10 +268,28 @@ export class CodexRuntime {
     const state = this.control.state; const threadId = state.conversationId;
     if (state.owner !== input.clientId || state.epoch !== input.epoch) throw new BridgeError('control_changed', '控制权已变化。请检查当前状态。', 409);
     if (!state.connected || !threadId) throw new BridgeError('native_not_ready', '请先在电脑打开 Codex 对话。', 409);
-    if (input.action === 'prompt') {
-      if (!input.text?.trim() || input.text.length > 32000) throw new BridgeError('invalid_input', '消息为空或过长。', 400);
+    if (input.action === 'prompt' || input.action === 'prompt_idle') {
+      if (typeof input.text !== 'string' || input.text.length > 32000 || !input.text.trim() && !input.attachments?.length) throw new BridgeError('invalid_input', '消息为空或过长。', 400);
+      if (input.action === 'prompt_idle' && (this.turnId || state.status !== 'idle' || state.requests.length)) throw new BridgeError('queue_not_idle', '会话正在工作，下一轮消息继续等待。', 409);
       if (state.requests.length) throw new BridgeError('agent_blocked', '请先回答当前问题。', 409);
-      const content = [{ type: 'text', text: input.text }];
+      const files = await resolveAttachments(join(dirname(this.control.record.endpoint), '..'), { socket: this.control.record.herdrSocket, terminal: this.control.record.terminalId, conversation: threadId }, input.attachments);
+      if (state.owner !== input.clientId || state.epoch !== input.epoch || state.conversationId !== threadId) throw new BridgeError('control_changed', '控制权或对话已变化，草稿已保留。', 409);
+      if (input.action === 'prompt_idle' && (this.turnId || state.status !== 'idle' || state.requests.length)) throw new BridgeError('queue_not_idle', '会话正在工作，下一轮消息继续等待。', 409);
+      if (state.requests.length) throw new BridgeError('agent_blocked', '请先回答当前问题。', 409);
+      if (input.skills !== undefined && (!Array.isArray(input.skills) || input.skills.length > 30 || input.skills.some(path => typeof path !== 'string'))) throw new BridgeError('invalid_input', '技能选择无效。', 400);
+      const explicit = new Set(input.skills ?? []);
+      const skills = state.skills ?? [];
+      if ([...explicit].some(path => !skills.some(skill => skill.path === path))) throw new BridgeError('invalid_input', '所选技能已不可用，请重新选择。', 400);
+      // Typed $mentions work too; duplicate names require an explicit picker selection.
+      const mentions = new Set([...input.text.matchAll(/(?:^|\s)\$([\w:.-]+)(?=\s|$)/g)].map(match => match[1]));
+      for (const name of mentions) {
+        const matches = skills.filter(skill => skill.name === name);
+        if (matches.length > 1 && !matches.some(skill => explicit.has(skill.path))) throw new BridgeError('invalid_input', '存在同名技能，请从技能列表选择。', 400);
+        if (matches.length === 1) explicit.add(matches[0].path);
+      }
+      const content: Frame[] = [{ type: 'text', text: attachmentPrompt(input.text, files) },
+        ...files.filter(file => file.mime.startsWith('image/')).map(file => ({ type: 'localImage', path: file.path })),
+        ...skills.filter(skill => explicit.has(skill.path)).map(skill => ({ type: 'skill', name: skill.name, path: skill.path }))];
       const result = this.turnId
         ? await this.call('turn/steer', { threadId, expectedTurnId: this.turnId, input: content })
         : await this.call('turn/start', { threadId, input: content, ...(state.model ? { model: state.model } : {}), ...(state.reasoningEffort ? { effort: state.reasoningEffort } : {}),

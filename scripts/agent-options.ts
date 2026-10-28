@@ -66,6 +66,25 @@ export function assertSessionAvailable(panes: Pane[], current: Pane, id?: string
   }
 }
 
+/** OMP supports prefix/implicit resume and restore; only exact identities are safe here. */
+export async function ompResumeId(args: string[], cwd = process.cwd()): Promise<string | undefined> {
+  const values = new Set(['--resume', '-r', '--session', '--model', '--provider', '--thinking', '--models', '--session-dir', '--extension', '-e', '--tools', '--smol', '--slow', '--plan', '--add-dir']);
+  const switches = new Set(['--no-skills', '--no-rules', '--no-tools', '--no-lsp', '--no-pty', '--hide-thinking', '--no-title', '--allow-home']);
+  let session: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i], name = token.split('=')[0];
+    if (switches.has(token)) continue;
+    if (!values.has(name)) throw new Error(`mherdr omp 暂不支持参数 ${name}；请使用原 omp 命令。`);
+    const value = token === name ? args[++i] : token.slice(name.length + 1);
+    if (!value || value.startsWith('-')) throw new Error(`${name} 缺少参数值。`);
+    if (['--resume', '-r', '--session'].includes(name)) {
+      if (session) throw new Error('只能指定一个 OMP 会话。');
+      session = value;
+    }
+  }
+  return session ? piResumeId(['--session', session], cwd) : undefined;
+}
+
 /** Resolve Pi's exact session header, without loading its transcript or guessing by cwd. */
 export async function piResumeId(args: string[], cwd = process.cwd()): Promise<string | undefined> {
   const values = new Set(['--session', '--session-dir', '--session-id', '--fork', '--provider', '--model', '--api-key', '--system-prompt', '--append-system-prompt', '--mode', '--name', '-n', '--models', '--tools', '-t', '--exclude-tools', '-xt', '--thinking', '--extension', '-e', '--skill', '--prompt-template', '--theme', '--use-theme', '--tui-mode']);

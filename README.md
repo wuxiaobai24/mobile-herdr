@@ -12,7 +12,7 @@ Web 与 Android 共用 React Native 界面、主题和会话协议，支持 Code
 
 ## 一键安装
 
-当前版本 **0.2.2-beta.8**，源码公开，运行包见 [GitHub Releases](https://github.com/wuxiaobai24/mobile-herdr/releases)。在已有 Herdr 的开发机执行：
+当前开发版本 **0.2.2-beta.12**，源码公开，已发布的运行包见 [GitHub Releases](https://github.com/wuxiaobai24/mobile-herdr/releases)。在已有 Herdr 的开发机执行：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wuxiaobai24/mobile-herdr/master/install.sh | bash
@@ -79,6 +79,7 @@ bun run install:agent
 mherdr codex
 # 或
 mherdr pi
+mherdr omp
 ```
 
 1. 电脑继续使用官方 TUI。手机打开同一 session / pane，点击「在手机继续」。
@@ -87,12 +88,19 @@ mherdr pi
 
 两端都能查看进度，一端拥有输入权。手机刷新、断网、关闭页面和 bridge 重启都不会停止 agent，也不会自动重放消息。第二台手机不能静默抢走控制权。
 
+更新 bridge 后，可以在“更多 → 原生连接详情 → 用新版 mherdr 重启”更新当前适配器。它等待任务结束、确认旧实例退出，再恢复准确的原对话；等待期间可取消。原 shell、终端、对话和草稿保持不变。无法安全恢复原启动参数时会保留原进程并提示。
+
+对话上滑到顶部会自动读取更早记录，加载失败可原地重试。会话列表顶部可新建工作区，每个工作区旁的加号可新建标签页；菜单支持工作区、标签页和终端重命名，以及向右或向下分屏。创建后在手机打开新终端，保留电脑当前焦点。
+
 已有的普通 CLI 会话不会自动迁移。首次启用时，先等当前任务完成、退出旧 CLI，然后使用精确的会话 ID：
 
 ```bash
 mherdr codex resume <会话-ID>
 mherdr pi --session <会话-ID或路径>
+mherdr omp --resume <完整会话-ID或路径>
 ```
+
+OMP 使用 `mherdr omp` 在新 Herdr pane 启动，或用完整 ID / 会话文件显式恢复；启动时关闭 OMP 自动恢复，避免误选对话。当前不支持热接管已运行的普通 OMP、手机端重启适配器或下一轮自动队列。切换 OMP 对话后需在电脑重新启动连接。
 
 Codex 的 app-server 独立于 TUI 运行；退出 TUI 后可重新运行 `mherdr codex` 接回。需要结束当前 pane 的后台原生 agent 时，在该 pane 的 shell 执行 `mherdr stop`。Pi 的扩展运行在原 Pi 进程中，退出 Pi 会结束这个运行实例。切换时应保持 Herdr pane 打开。
 

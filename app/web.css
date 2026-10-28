@@ -17,7 +17,7 @@ input:focus,textarea:focus { outline: 2px solid var(--accent); outline-offset: -
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
 .markdown { color: var(--text); font-size: var(--reading-size, 16px); font-family: var(--reading-font, inherit); line-height: 1.8; overflow-wrap: anywhere; animation: appear .18s ease-out; }
 .markdown>:first-child { margin-top: 0; }.markdown>:last-child { margin-bottom: 0; }
-.markdown p { margin: 0 0 14px; }.markdown ul,.markdown ol { padding-left: 24px; }
+.markdown p,.markdown .markdown-paragraph { margin: 0 0 14px; }.markdown ul,.markdown ol { padding-left: 24px; }
 .markdown h1,.markdown h2,.markdown h3 { margin: 22px 0 12px; font-size: 1.2em; font-weight: 600; line-height: 1.6; }
 .markdown pre { padding: 16px; background: var(--sidebar); border: 1px solid var(--line); border-radius: 8px; overflow: auto; line-height: 1.65; }
 .markdown code { font-family: "SFMono-Regular",Consolas,"Liberation Mono",monospace; font-size: .87em; background: var(--hover); padding: 2px 5px; border-radius: 4px; }

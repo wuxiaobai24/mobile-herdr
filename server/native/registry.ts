@@ -31,7 +31,7 @@ export async function findNative(directory: string, socket: string, pane: Pane):
     const stat = await lstat(path).catch(() => null);
     if (!stat?.isFile() || stat.size > 4096 || (stat.mode & 0o077) || stat.uid !== process.getuid?.()) continue;
     const record: NativeRecord | undefined = await readFile(path, 'utf8').then(JSON.parse).catch(() => undefined);
-    if (!record || record.runtimeId + '.json' !== name || typeof record.endpoint !== 'string' || !['codex', 'pi'].includes(record.provider) || !Number.isInteger(record.pid) || record.pid <= 0) continue;
+    if (!record || record.runtimeId + '.json' !== name || typeof record.endpoint !== 'string' || !['codex', 'pi', 'omp'].includes(record.provider) || !Number.isInteger(record.pid) || record.pid <= 0) continue;
     if (record && record.herdrSocket === socket && record.terminalId === pane.terminal_id && resolve(record.endpoint) === join(resolve(directory), record.runtimeId + '.sock')) return record;
   }
 }

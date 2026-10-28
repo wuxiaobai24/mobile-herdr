@@ -3,11 +3,12 @@ import base64
 import json
 import os
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
 import uiautomator2 as u2
-from uiautomator2.exceptions import UiObjectNotFoundError
+from uiautomator2.exceptions import RPCUnknownError, UiObjectNotFoundError
 
 serial = os.environ['MOBILE_HERDR_ANDROID_SERIAL']
 package = 'dev.mobileherdr.app'
@@ -46,6 +47,12 @@ def stable_click(selector, label):
         try:
             bounds = selector.info.get('bounds')
         except UiObjectNotFoundError:
+            previous, stable = None, 0
+            time.sleep(.15)
+            continue
+        except RPCUnknownError as error:
+            if 'StaleObjectException' not in str(error):
+                raise
             previous, stable = None, 0
             time.sleep(.15)
             continue
@@ -103,7 +110,7 @@ try:
     shot('connect.png')
     check('release APK starts without Metro and exposes native pairing')
     click('扫描配对二维码')
-    d(resourceIdMatches='.*:id/permission_deny_button').click(timeout=15)
+    stable_click(d(resourceIdMatches='.*:id/permission_deny_button'), 'deny camera permission')
     assert d(textContains='相机权限未开启').wait(timeout=15)
     check('camera permission denial keeps manual pairing available')
     # Capture am output: Android echoes the credential handoff URI, so never print it.
@@ -114,6 +121,46 @@ try:
     until(lambda: d(description='发给原会话的消息').exists)
     shot('chat.png')
     check('Android connects to the exact fixture session and pane')
+    if os.environ.get('MOBILE_HERDR_ANDROID_DOWNLOAD_ONLY') == '1':
+        d(resourceId='conversation-scroll').fling.toEnd(max_swipes=40)
+        click('下载项目文件 slow.apk')
+        until(lambda: d(description='取消下载 slow.apk').exists)
+        shot('chat-download-progress.png')
+        click('取消下载 slow.apk')
+        until(lambda: d(textContains='已取消下载').exists)
+        check('Android chat file link exposes progress and cancellation')
+        adb('shell', 'rm', '-f', '/sdcard/Download/slow.apk')
+        click('下载项目文件 slow.apk')
+        until(lambda: 'documentsui' in d.app_current().get('package',''))
+        hide_keyboard();stable_click(d(resourceId='android:id/button1'),'Save downloaded APK fixture')
+        until(lambda: d(textContains='文件已保存').exists)
+        shot('chat-download-saved.png')
+        check('Android streaming download saves exact APK fixture bytes', int(adb('shell','stat','-c','%s','/sdcard/Download/slow.apk'))==4*1024*1024)
+        check('Android downloaded APK fixture has correct content', adb('shell','sha256sum','/sdcard/Download/slow.apk').split()[0]=='153736a5d0e1b75502e9ae6d82d19bf2372ed15e3a500cc02838d036cc953cf3')
+        adb('shell', 'rm', '-f', '/sdcard/Download/slow.apk')
+        click('更多会话操作');click('版本更新')
+        until(lambda:d(description='下载最新 Android APK').exists)
+        click('下载最新 Android APK')
+        until(lambda:d(description='取消文件下载').exists)
+        shot('local-apk-download.png');click('取消文件下载')
+        until(lambda:d(text='已取消下载。').exists)
+        check('Android updater APK uses cancellable transfer instead of an untracked browser launch')
+        click('关闭版本更新')
+        sys.exit(0)
+    if os.environ.get('MOBILE_HERDR_ANDROID_INBOX_ONLY') == '1':
+        inspect('/blocked'); click('打开会话列表'); click('筛选需要处理的会话')
+        native_target='处理 Android test bridge default w1:p1'
+        legacy_target='处理 Android test bridge default w3:p1'
+        until(lambda: d(description=native_target).exists)
+        until(lambda: d(description=legacy_target).exists)
+        shot('native-inbox.png')
+        check('Android inbox includes native approval state from an unopened provider snapshot')
+        check('Android inbox excludes an idle sibling pane', not d(description='打开 w1:p2').exists and not d(text='Android second tab').exists)
+        click(legacy_target)
+        until(lambda: d(text='Agent 正在等待你确认，打开终端查看并操作。').exists)
+        check('Android inbox opens the exact requested pane')
+        inspect('/idle')
+        sys.exit(0)
     if os.environ.get('MOBILE_HERDR_ANDROID_FILES_ONLY') != '1':
         click('更多会话操作')
         click('查找与历史')
@@ -122,8 +169,22 @@ try:
         shot('reading-search.png')
         check('native Markdown and search locate the original user message')
         click('关闭对话查找')
+        d(text='1 项工具操作').click(timeout=15)
+        click('展开工具 android-tool')
+        until(lambda: d(text='Typecheck passed').exists)
+        shot('tool-details.png')
+        check('Android tool rendering exposes a compact summary and expandable output')
+        click('收起工具 android-tool')
         if d(description='回到最新消息').exists:
             click('回到最新消息')
+        for _ in range(5):
+            d(resourceId='conversation-scroll').fling.toBeginning(max_swipes=40)
+            if inspect()['historyReads'] and d(text='Android earlier message 0').exists:
+                break
+        until(lambda: d(text='Android earlier message 0').exists)
+        shot('history-oldest.png')
+        check('Android upward scrolling automatically loads earlier records through the first original message', inspect()['historyReads'] > 0)
+        go_latest()
         click('在手机继续')
         until(lambda: inspect()['owner'] != 'desktop')
         check('native takeover uses the same registered runtime')
@@ -140,6 +201,63 @@ try:
         until(lambda: inspect().get('mode') == 'plan')
         until(lambda: editor.get_text() in ['', '继续交给 agent…'])
         check('native slash selects planning mode without creating a conversation')
+        editor.set_text('/skills'); click('发送消息')
+        until(lambda: d(description='搜索会话技能').exists)
+        click('选择技能 fixture-skill')
+        until(lambda: editor.get_text() == '$fixture-skill ')
+        check('Android skills picker inserts a discovered skill into the shared draft')
+        editor.set_text('')
+        upload_text = output / 'android-attachment.txt'
+        upload_text.write_text('Android attachment bytes', encoding='utf8')
+        upload_image = output / 'android-attachment.png'
+        upload_image.write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAEElEQVR4nGOQq3gGRww4OQBSLhHR6WGRvAAAAABJRU5ErkJggg=='))
+        for upload_file in [upload_text, upload_image]:
+            destination = '/sdcard/Download/' + upload_file.name
+            adb('push', str(upload_file), destination)
+            adb('shell', 'am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', '-d', 'file://' + destination)
+            click('添加图片或文件')
+            until(lambda: 'documentsui' in d.app_current().get('package', ''))
+            if not d(text=upload_file.name).exists:
+                if d(description='Show roots').exists:
+                    stable_click(d(description='Show roots'), 'document picker roots')
+                elif d(description='Open navigation drawer').exists:
+                    stable_click(d(description='Open navigation drawer'), 'document picker roots')
+                stable_click(d(text='Downloads'), 'document picker Downloads')
+            stable_click(d(text=upload_file.name), upload_file.name)
+            until(lambda: d(description='移除附件 ' + upload_file.name).exists)
+            until(lambda: not d(text='上传中…').exists)
+        check('Android system picker uploads a real file and image with their original names')
+        shot('attachment-draft.png')
+        editor.set_text('Android attachments')
+        click('发送消息')
+        until(lambda: any(any(row.get('type') == 'localImage' for row in rows) for rows in inspect()['providerInputs']))
+        hide_keyboard(); go_latest()
+        def attachment_visible(label):
+            if d(description=label).exists:
+                return True
+            # The provider can accept input before React has rendered the new
+            # message. Retry the real "latest" control instead of searching
+            # the entire long history while that update is still in flight.
+            go_latest()
+            if not d(description=label).exists:
+                d(resourceId='conversation-scroll').scroll.backward(steps=15)
+            return d(description=label).exists
+        until(lambda: attachment_visible('下载附件 android-attachment.txt'))
+        def image_opened():
+            if d(description='完整图片 android-attachment.png').exists:
+                return True
+            # The image may move as decoded media above it changes height.
+            if d(description='查看图片 android-attachment.png').exists:
+                d(description='查看图片 android-attachment.png').click()
+            else:
+                width, height = d.window_size()
+                d.swipe(width // 2, int(height * .45), width // 2, int(height * .70), duration=.3)
+            return False
+        until(image_opened)
+        shot('attachment-image.png'); click('关闭图片预览')
+        check('Android attachment message renders its image and submits localImage to the existing Codex provider')
+        editor.set_text('/stop'); click('发送消息')
+        until(lambda: editor.get_text() in ['', '继续交给 agent…'])
         click('会话快捷选项'); click('命令 /editor')
         editor.set_text('Android fullscreen draft\n继续同一个会话')
         hide_keyboard(); shot('fullscreen-draft.png')
@@ -163,7 +281,7 @@ try:
         go_latest()
         shot('approval.png')
         if not d(description='允许本次操作').exists:
-            d(scrollable=True).scroll.to(description='允许本次操作')
+            d(resourceId='conversation-scroll').scroll.to(description='允许本次操作')
         click('允许本次操作')
         until(lambda: inspect()['requests'] == 0)
         check('Android handles structured command approval')
@@ -174,10 +292,38 @@ try:
         go_latest()
         d(text='深色').click(timeout=20)
         if not d(description='提交回答').exists:
-            d(scrollable=True).scroll.to(description='提交回答')
+            d(resourceId='conversation-scroll').scroll.to(description='提交回答')
         click('提交回答')
         until(lambda: inspect()['requests'] == 0)
         check('Android answers a structured provider question')
+        # P0: queue stays bound to this exact runtime while navigating tabs.
+        inspect('/idle'); inspect('/working')
+        click('下一轮再做'); editor.set_text('Android queued next turn'); click('发送消息')
+        until(lambda: d(description='查看下一轮消息').exists)
+        check('Android next-turn acceptance preserves current work', inspect()['queueSent'] == 0)
+        hide_keyboard(); click('切换标签页 w1:t2'); click('终端')
+        inspect('/idle'); until(lambda: inspect()['queueSent'] == 1)
+        check('Android queue delivers once while another tab is selected')
+        click('切换标签页 w1:t1')
+        until(lambda: d(description='发给原会话的消息').exists)
+        click('切换标签页 w1:t2')
+        until(lambda: d(description='terminal-webview').exists or web_exists('历史'))
+        check('Android tab navigation restores terminal mode')
+        click('切换标签页 w1:t1'); until(lambda: d(description='发给原会话的消息').exists)
+        editor = d(description='发给原会话的消息')
+        click('下一轮再做'); editor.set_text('Android held next turn'); click('发送消息')
+        until(lambda: d(description='查看下一轮消息').exists)
+        hide_keyboard(); d.press('home')
+        inspect('/idle'); d.app_start(package)
+        until(lambda: d(description='查看下一轮消息').exists)
+        click('查看下一轮消息'); until(lambda: d(text='已暂停').exists)
+        shot('queue-paused.png')
+        check('Android OS background pauses queued work without replay', not inspect()['queueReplayed'])
+        recover = d(descriptionMatches='取回队列草稿 .*')
+        stable_click(recover, 'recover held message')
+        until(lambda: not d(description='查看下一轮消息').exists)
+        check('Android paused queue explicitly restores its draft', editor.get_text() == 'Android held next turn')
+        editor.set_text('')
         editor.set_text('Android durable draft')
         until(lambda: d(text='草稿已保存').exists)
         d.press('home')
@@ -215,11 +361,18 @@ try:
         d.press('back')
         check('shared theme controls work in native Android')
         click('打开会话列表')
-        assert d(description='搜索会话').exists
+        until(lambda: d(description='搜索会话').exists)
         d.press('back')
         check('Android Back closes the session drawer')
         click('终端')
         until(lambda: web_exists('历史'))
+        before_scroll = len(inspect()['terminalInput'])
+        screen_width, screen_height = d.window_size()
+        d.swipe(screen_width // 2, int(screen_height * .35), screen_width // 2, int(screen_height * .65), duration=.4)
+        until(lambda: web_exists('回到实时'))
+        shot('terminal-swipe.png')
+        check('Android WebView touch opens inline history without terminal input', len(inspect()['terminalInput']) == before_scroll)
+        web_click('回到实时')
         web_click('历史')
         until(lambda: web_exists('返回终端'))
         (output / 'terminal-hierarchy.xml').write_text(d.dump_hierarchy())
@@ -271,7 +424,7 @@ try:
     assert save.wait(timeout=20), 'Android system Save action'
     stable_click(save, 'Android system Save action')
     until(lambda: d(description='关闭文件浏览').exists)
-    assert d(text='文件已交给系统保存。').wait(timeout=20)
+    assert d(text='文件已保存。').wait(timeout=20)
     check('native download saves exact bytes through the Android document picker', adb('shell', 'cat', '/sdcard/Download/hello.ts') == 'export const greeting = "你好";')
     adb('shell', 'rm', '-f', '/sdcard/Download/hello.ts')
     click('下载当前文件')
@@ -286,7 +439,7 @@ try:
     until(lambda: 'documentsui' in d.app_current().get('package', ''))
     hide_keyboard()
     stable_click(d(resourceId='android:id/button1'), 'Save Chinese project filename')
-    assert d(text='文件已交给系统保存。').wait(timeout=20)
+    assert d(text='文件已保存。').wait(timeout=20)
     check('native save preserves Chinese filename, spaces and UTF-8 bytes', adb('shell', 'cat', chinese_path) == '# 手机文件\n\n内容预览 ✓')
     adb('shell', 'rm', '-f', chinese_path)
     click('返回文件目录'); click('打开文件 preview.png')
@@ -296,6 +449,39 @@ try:
     shot('file-image.png')
     check('native image preview decodes authenticated project pixels')
     click('关闭文件浏览')
+    show_details(); inspect('/working')
+    click('用新版 mherdr 重启当前会话')
+    until(lambda: d(text='等待当前任务完成，再用新版 mherdr 重启，可取消…').exists)
+    shot('restart-waiting.png')
+    click('取消等待重启')
+    until(lambda: d(text='已取消，当前 agent 保持运行。').exists)
+    check('Android offers explicit adapter restart, waits for active work and cancels safely')
+    inspect('/idle'); click('关闭原生连接详情')
+    click('打开会话列表'); click('新建工作区')
+    d(description='布局名称').set_text('Android space')
+    d(description='新终端工作目录').set_text('/tmp/android-space')
+    hide_keyboard(); shot('create-space.png'); click('提交布局操作')
+    until(lambda: not d(description='关闭布局管理').exists)
+    check('Android creates and selects a workspace without moving desktop focus', inspect()['layout'][-1]['method'] == 'workspace.create' and inspect()['focused'] == 'w1:p1')
+    def show_android_workspace():
+        until(lambda: d(description='搜索会话').exists)
+        d(description='搜索会话').set_text('Android space')
+        hide_keyboard()
+    click('打开会话列表'); show_android_workspace(); click('新建标签页 w4')
+    d(description='布局名称').set_text('Android tab'); hide_keyboard(); click('提交布局操作')
+    until(lambda: not d(description='关闭布局管理').exists)
+    check('Android creates a tab in the selected workspace', inspect()['layout'][-1]['params']['workspace_id'] == 'w4')
+    click('打开会话列表'); show_android_workspace(); click('管理工作区 w4'); click('重命名标签页')
+    d(description='布局名称').set_text('Android renamed tab'); hide_keyboard(); click('提交布局操作')
+    until(lambda: not d(description='关闭布局管理').exists)
+    check('Android rename uses the phone-selected tab', inspect()['layout'][-1]['params']['tab_id'] == 'w4:t2')
+    click('管理工作区 w4'); click('拆分终端'); click('向右分屏')
+    shot('split-pane.png'); click('提交布局操作')
+    until(lambda: not d(description='关闭布局管理').exists)
+    check('Android splits the selected terminal', inspect()['layout'][-1]['params']['target_pane_id'] == 'w4:p2')
+    click('打开会话列表')
+    if d(description='清除搜索').exists: click('清除搜索')
+    click('打开 w1:p1')
     click('更多会话操作'); click('版本更新')
     assert d(description='下载最新 Android APK').wait(timeout=20)
     shot('update.png')

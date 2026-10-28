@@ -7,6 +7,8 @@ import { suppliedChanges } from '../../shared/diff';
 import { copyText } from '../clipboard';
 import { useTheme, mono } from '../theme';
 import { DiffView } from './DiffView';
+import { ProjectFileLink } from './ProjectFileLink';
+import { MessageImage } from './MessageImage';
 
 function CodeBlock({ value, language }: { value: string; language?: string | null }): React.JSX.Element {
   const { colors, styles, appearance } = useTheme();
@@ -26,6 +28,7 @@ export default memo(function MessageBody({ text }: { text: string }): React.JSX.
   const definitions = new Map<string, Definition>(tree.children.filter((node): node is Definition => node.type === 'definition').map(node => [node.identifier.toLowerCase(), node]));
   function link(url: string, children: ReactNode, key: number): ReactNode {
     const target = safeExternalUrl(url);
+    if (!target) return <ProjectFileLink key={key} url={url}>{children}</ProjectFileLink>;
     return <Text key={key} accessibilityRole={target ? 'link' : undefined} style={target ? { color: colors.accent, textDecorationLine: 'underline' } : undefined}
       onPress={target ? () => { void Linking.openURL(target).catch(() => setError('无法打开此链接。')); } : undefined}>{children}</Text>;
   }
@@ -53,7 +56,18 @@ export default memo(function MessageBody({ text }: { text: string }): React.JSX.
   function blocks(nodes: RootContent[]): ReactNode[] {
     return nodes.map((node, key) => {
       switch (node.type) {
-        case 'paragraph': return <Text selectable key={key} style={styles.text}>{inline(node.children)}</Text>;
+        case 'paragraph': {
+          const parts: ReactNode[] = []; let text: Nodes[] = [];
+          function flush(): void { if (text.length) { parts.push(<Text selectable key={parts.length} style={styles.text}>{inline(text)}</Text>); text = []; } }
+          for (const child of node.children) {
+            if (child.type === 'image' || child.type === 'imageReference') {
+              flush(); parts.push(<MessageImage key={parts.length} src={child.type === 'image' ? child.url : definitions.get(child.identifier.toLowerCase())?.url} alt={child.alt ?? '图片'} />);
+            } else if (child.type === 'link' && !safeExternalUrl(child.url)) {
+              flush(); parts.push(<ProjectFileLink key={parts.length} url={child.url}>{inline(child.children)}</ProjectFileLink>);
+            } else text.push(child);
+          }
+          flush(); return <View key={key} style={{ gap: 10 }}>{parts}</View>;
+        }
         case 'heading': return <Text selectable key={key} accessibilityRole="header" style={[styles.text, { fontSize: appearance.readingSize + Math.max(1, 7 - node.depth * 2), fontWeight: '700' }]}>{inline(node.children)}</Text>;
         case 'code': return <CodeBlock key={key} value={node.value} language={node.lang} />;
         case 'blockquote': return <View key={key} style={{ paddingLeft: 12, borderLeftWidth: 2, borderColor: colors.line, gap: 8 }}>{blocks(node.children)}</View>;

@@ -7,6 +7,8 @@ import { BridgeError } from '../../server/rpc';
 import { PiDialogs } from '../../server/native/pi-dialogs';
 import { reportToHerdr } from '../../server/native/herdr-reporting';
 import { isDesktopReclaim, isTerminalReply } from '../../shared/terminal-keys';
+import { resolveAttachments, attachmentPrompt } from '../../server/attachments';
+import { messageMedia, uploadedPrompt } from '../../shared/message-media';
 
 // Structural API typing keeps the extension usable with Pi's bundled distribution.
 type PiContext = {
@@ -72,9 +74,11 @@ export default function mobileHerdr(pi: PiAPI, options: { directory?: string } =
     if (message.role === 'toolResult') {
       const toolId = message.toolCallId ?? id;
       const previous = control.state.messages.find(row => row.id === toolId);
-      control.message({ id: toolId, role: 'tool', toolName: message.toolName ?? previous?.toolName ?? 'tool', text: previous?.text ?? '', output: text });
+      control.message({ id: toolId, role: 'tool', toolName: message.toolName ?? previous?.toolName ?? 'tool', text: previous?.text ?? '', output: text, media: messageMedia(content), toolStatus: message.isError ? 'failed' : 'completed' });
     } else {
-      if (text) control.message({ id, role: message.role, text });
+      const prompt = message.role === 'user' ? uploadedPrompt(text) : { text, media: [] };
+      const media = [...prompt.media, ...messageMedia(content)];
+      if (text || media.length) control.message({ id, role: message.role, text: prompt.text, media });
       for (const row of content.filter((row: any) => row.type === 'toolCall')) control.message({ id: row.id, role: 'tool', toolName: row.name, text: JSON.stringify(row.arguments) });
     }
   }
@@ -89,6 +93,7 @@ export default function mobileHerdr(pi: PiAPI, options: { directory?: string } =
     }
     const directory = options.directory ?? process.env.MOBILE_HERDR_NATIVE_DIRECTORY ?? join(process.env.MOBILE_HERDR_STATE ?? join(homedir(), '.local/state/mobile-herdr'), 'native');
     let identity = JSON.parse(process.env.MOBILE_HERDR_NATIVE_IDENTITY ?? '{}') as NativeIdentity;
+    if (identity.paneId !== process.env.HERDR_PANE_ID || identity.herdrSocket !== (process.env.HERDR_SOCKET_PATH ?? process.env.HERDR_SOCKET)) identity = {} as NativeIdentity;
     if (!identity.terminalId) {
       const herdrSocket = process.env.HERDR_SOCKET_PATH ?? process.env.HERDR_SOCKET;
       const paneId = process.env.HERDR_PANE_ID;
@@ -98,30 +103,41 @@ export default function mobileHerdr(pi: PiAPI, options: { directory?: string } =
       if (!pane || pane.agent && pane.agent !== 'pi') return;
       identity = { herdrSocket, paneId, terminalId: pane.terminal_id };
     }
-    control = new NativeController(directory, identity, 'pi');
+    const provider = process.env.MOBILE_HERDR_PROVIDER === 'omp' ? 'omp' : 'pi';
+    control = new NativeController(directory, identity, provider);
     const current = control;
     current.onShutdown = () => context?.shutdown();
     current.state.conversationId = ctx.sessionManager.getSessionId();
     syncOptions(ctx);
     for (const entry of ctx.sessionManager.getBranch()) if (entry.type === 'message') message(entry.message, entry.id);
     dialogs = new PiDialogs(current, () => context?.isIdle() ?? true); dialogs.wrap(ctx.ui);
-    current.beforeClaim = () => dialogs?.beforeClaim();
+    current.beforeClaim = () => {
+      if (provider === 'omp' && typeof ctx.ui.onTerminalInput !== 'function') throw new BridgeError('unsupported_action', '当前 OMP 不支持安全的终端输入隔离，请继续使用电脑。', 409);
+      if (provider === 'omp' && context?.sessionManager.getSessionId() !== current.state.conversationId) throw new BridgeError('native_changed', 'OMP 对话已切换，请在电脑重新启动连接。', 409);
+      dialogs?.beforeClaim();
+    };
     removeTerminalInput = ctx.ui.onTerminalInput?.((data: string) => {
       if (isDesktopReclaim(data)) { current.desktop(); return { consume: true }; }
       if (current.state.owner === 'desktop' || isTerminalReply(data)) return;
       return { consume: true };
     });
     current.state.capabilities.approvals = true;
+    current.state.capabilities.attachments = true;
+    current.state.capabilities.idlePrompt = provider !== 'omp';
     current.onControl = () => {
       ctx.ui.setStatus('mobile-herdr', current.state.owner === 'desktop' ? '手机可接管 · Ctrl+] 接回' : '手机正在控制 · Ctrl+] 接回');
       if (current.state.owner === 'desktop') dialogs?.desktop();
     };
     current.perform = async input => {
       if (!context) throw new BridgeError('native_not_ready', 'Pi 尚未就绪。', 409);
-      if (input.action === 'prompt') {
+      if (provider === 'omp' && context.sessionManager.getSessionId() !== current.state.conversationId) throw new BridgeError('native_changed', 'OMP 对话已切换，请在电脑重新启动连接。', 409);
+      if (input.action === 'prompt' || input.action === 'prompt_idle') {
         if (compacting) throw new BridgeError('agent_working', '正在压缩上下文，请稍后发送。', 409);
-        if (!input.text?.trim() || input.text.length > 32000) throw new BridgeError('invalid_input', '消息为空或过长。', 400);
-        pi.sendUserMessage(input.text, context.isIdle() ? undefined : { deliverAs: 'steer' });
+        if (typeof input.text !== 'string' || input.text.length > 32000 || !input.text.trim() && !input.attachments?.length) throw new BridgeError('invalid_input', '消息为空或过长。', 400);
+        const files = await resolveAttachments(join(directory, '..'), { socket: current.record.herdrSocket, terminal: current.record.terminalId, conversation: current.state.conversationId }, input.attachments);
+        if (current.state.owner !== input.clientId || current.state.epoch !== input.epoch || current.state.conversationId !== input.conversationId) throw new BridgeError('control_changed', '控制权或对话已变化，草稿已保留。', 409);
+        if (input.action === 'prompt_idle' && (!context.isIdle() || compacting || current.state.requests.length)) throw new BridgeError('queue_not_idle', '会话正在工作，下一轮消息继续等待。', 409);
+        pi.sendUserMessage(attachmentPrompt(input.text, files), context.isIdle() ? undefined : { deliverAs: 'steer' });
         return { ok: true, receipt: input.requestId };
       }
       if (input.action === 'stop') { context.abort(); dialogs?.cancel(); return { ok: true }; }
@@ -173,7 +189,7 @@ export default function mobileHerdr(pi: PiAPI, options: { directory?: string } =
     context = ctx; message(event.message);
   });
   pi.on('tool_execution_start', (event, ctx) => {
-    context = ctx; control?.message({ id: event.toolCallId, role: 'tool', toolName: event.toolName, text: JSON.stringify(event.args ?? {}) });
+    context = ctx; control?.message({ id: event.toolCallId, role: 'tool', toolName: event.toolName, text: JSON.stringify(event.args ?? {}), toolStatus: 'running' });
   });
   pi.on('tool_execution_update', event => {
     const previous = control?.state.messages.find(row => row.id === event.toolCallId);
@@ -181,6 +197,12 @@ export default function mobileHerdr(pi: PiAPI, options: { directory?: string } =
   });
   pi.on('agent_start', (_event, ctx) => { context = ctx; if (control) { control.state.status = 'working'; control.changed(); } });
   pi.on('agent_settled', (_event, ctx) => { context = ctx; if (control) { control.state.status = 'idle'; syncOptions(ctx); } });
+  if (process.env.MOBILE_HERDR_PROVIDER === 'omp') pi.on('agent_end', (_event, ctx) => {
+    context = ctx;
+    // OMP does not emit Pi's agent_settled extension event. Check after the
+    // callback so the provider has updated its own idle flag.
+    setTimeout(() => { if (control && context === ctx && ctx.isIdle()) { control.state.status = 'idle'; syncOptions(ctx); } }, 50);
+  });
   pi.on('model_select', (_event, ctx) => { context = ctx; syncOptions(ctx); });
   pi.on('thinking_level_select', (_event, ctx) => { context = ctx; syncOptions(ctx); });
   async function desktop(ctx: PiContext): Promise<void> { control?.desktop(); ctx.ui.notify('已接回电脑。'); }

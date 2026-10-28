@@ -1,4 +1,5 @@
 import type { ChatMessage } from '../shared/protocol';
+import { messageMedia, uploadedPrompt } from '../shared/message-media';
 
 type RecordValue = Record<string, any>;
 function textContent(content: unknown): string {
@@ -15,7 +16,7 @@ export function parseTranscript(lines: string[], agent: string, options: { offse
   const seen = new Set<string>();
   let position = options.offset ?? 0, recordPosition = position;
   function add(message: ChatMessage): void {
-    if (!message.text.trim() || seen.has(message.id)) return;
+    if (!message.text.trim() && !message.media?.length || seen.has(message.id)) return;
     seen.add(message.id); messages.push(message); options.positions?.set(message.id, recordPosition);
   }
   for (let index = 0; index < lines.length; index++) {
@@ -30,14 +31,15 @@ export function parseTranscript(lines: string[], agent: string, options: { offse
       if (item.type === 'message' && ['user', 'assistant'].includes(item.role) && item.channel !== 'analysis') {
         const text = textContent(item.content);
         if (item.role === 'user' && /^\s*<(environment_context|permissions|instructions|turn_aborted)>/.test(text)) continue;
-        add({ id: item.id ?? fallbackId, role: item.role, text, timestamp });
+        const prompt = item.role === 'user' ? uploadedPrompt(text) : { text, media: [] };
+        add({ id: item.id ?? fallbackId, role: item.role, text: prompt.text, timestamp, media: [...prompt.media, ...messageMedia(item.content)] });
       } else if (['function_call', 'custom_tool_call'].includes(item.type)) {
         const input = String(item.arguments ?? item.input ?? '');
         const message: ChatMessage = { id: item.call_id ?? fallbackId, role: 'tool', toolName: item.name, text: input.slice(0, 64000), truncated: input.length > 64000, timestamp };
         tools.set(message.id, message); add(message);
       } else if (['function_call_output', 'custom_tool_call_output'].includes(item.type)) {
         const tool = tools.get(item.call_id);
-        if (tool) { const output = String(typeof item.output === 'string' ? item.output : JSON.stringify(item.output)); tool.output = output.slice(0, 16000); tool.truncated ||= output.length > 16000; }
+        if (tool) { const output = String(typeof item.output === 'string' ? item.output : JSON.stringify(item.output)); tool.output = output.slice(0, 16000); tool.truncated ||= output.length > 16000; tool.media = messageMedia(item.output); }
       }
     } else {
       const item = record.message;
@@ -48,7 +50,8 @@ export function parseTranscript(lines: string[], agent: string, options: { offse
         continue;
       }
       const text = textContent(item.content);
-      add({ id: record.uuid ?? record.id ?? fallbackId, role: item.role, text, timestamp });
+      const prompt = item.role === 'user' ? uploadedPrompt(text) : { text, media: [] };
+      add({ id: record.uuid ?? record.id ?? fallbackId, role: item.role, text: prompt.text, timestamp, media: [...prompt.media, ...messageMedia(item.content)] });
       if (!Array.isArray(item.content)) continue;
       for (const [blockIndex, block] of item.content.entries()) {
         if (['tool_use', 'toolCall'].includes(block.type)) {

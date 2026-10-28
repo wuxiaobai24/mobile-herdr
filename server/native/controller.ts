@@ -6,9 +6,10 @@ import type { NativeAction, NativeState } from '../../shared/native';
 import { decodeCursor, historyCursor, historyIdentity, messagePage } from '../history';
 import type { ChatMessage, HistoryPage } from '../../shared/protocol';
 import { BridgeError } from '../rpc';
+import { version } from '../../package.json';
 
 export interface NativeIdentity { herdrSocket: string; paneId: string; terminalId: string }
-export interface NativeRecord extends NativeIdentity { runtimeId: string; provider: 'codex' | 'pi'; pid: number; endpoint: string }
+export interface NativeRecord extends NativeIdentity { runtimeId: string; provider: 'codex' | 'pi' | 'omp'; pid: number; endpoint: string }
 export interface NativeEnvelope { method: 'state' | 'action' | 'desktop' | 'attach' | 'shutdown' | 'history'; input?: NativeAction; history?: { runtimeId: string; conversationId: string; cursor?: string } }
 
 /** The provider, not the web bridge, owns this state and all delivery receipts. */
@@ -18,6 +19,7 @@ export class NativeController {
   private server?: Server;
   private sockets = new Set<Socket>();
   private receipts = new Map<string, { fingerprint: string; promise: Promise<unknown> }>();
+  private promptInFlight = 0;
   private archive: ChatMessage[] = [];
   private archiveConversation?: string;
   private archiveLimited = false;
@@ -28,20 +30,27 @@ export class NativeController {
   onAttach?: () => void;
   perform?: (input: NativeAction) => Promise<unknown>;
 
-  constructor(private directory: string, identity: NativeIdentity, provider: 'codex' | 'pi') {
+  constructor(private directory: string, identity: NativeIdentity, provider: 'codex' | 'pi' | 'omp') {
     const runtimeId = randomUUID();
     this.record = { ...identity, runtimeId, provider, pid: process.pid, endpoint: join(directory, runtimeId + '.sock') };
-    this.state = { runtimeId, provider, owner: 'desktop', epoch: 0, revision: 0, connected: true, status: 'idle',
+    this.state = { runtimeId, provider, adapterVersion: version, owner: 'desktop', epoch: 0, revision: 0, connected: true, status: 'idle',
       messages: [], requests: [], truncated: false, capabilities: { steer: true, approvals: provider === 'codex', models: true, history: true } };
   }
   changed(): void { this.state.revision++; }
   message(message: ChatMessage): void {
+    // Images count toward the IPC budget too; large inline media must not make
+    // the entire live session unreadable through the 2 MB registry transport.
+    const mediaBytes = (row: ChatMessage): number => Buffer.byteLength(JSON.stringify(row.media ?? []));
+    if (mediaBytes(message) > 1200000) {
+      message = { ...message, media: [...message.media ?? []], truncated: true };
+      while (message.media!.length && mediaBytes(message) > 1200000) message.media!.pop();
+    }
     if (this.archiveConversation !== this.state.conversationId) { this.archive = []; this.archiveLimited = false; this.archiveConversation = this.state.conversationId; }
     const archived = { ...message, truncated: !!message.truncated || message.text.length > 64000 || (message.output?.length ?? 0) > 64000, text: message.text.slice(-64000), output: message.output?.slice(-64000) };
     const prior = this.archive.find(row => row.id === message.id);
     if (prior) Object.assign(prior, archived); else this.archive.push(archived);
-    let archiveSize = this.archive.reduce((n, row) => n + row.text.length + (row.output?.length ?? 0), 0);
-    while (this.archive.length > 5000 || archiveSize > 8000000) { const removed = this.archive.shift()!; archiveSize -= removed.text.length + (removed.output?.length ?? 0); this.archiveLimited = true; }
+    let archiveSize = this.archive.reduce((n, row) => n + row.text.length + (row.output?.length ?? 0) + mediaBytes(row), 0);
+    while (this.archive.length > 5000 || archiveSize > 8000000) { const removed = this.archive.shift()!; archiveSize -= removed.text.length + (removed.output?.length ?? 0) + mediaBytes(removed); this.archiveLimited = true; }
     const existing = this.state.messages.find(row => row.id === message.id);
     if (existing) Object.assign(existing, message); else this.state.messages.push(message);
     // Bound both individual tool output and the complete reconnect snapshot.
@@ -51,8 +60,9 @@ export class NativeController {
       if (row.output && row.output.length > 12000) { row.output = row.output.slice(0, 12000); row.truncated = true; this.state.truncated = true; }
     }
     let size = this.state.messages.reduce((sum, row) => sum + row.text.length + (row.output?.length ?? 0), 0);
-    while (this.state.messages.length > 160 || size > 120000) {
-      const row = this.state.messages.shift()!; size -= row.text.length + (row.output?.length ?? 0); this.state.truncated = true;
+    let images = this.state.messages.reduce((sum, row) => sum + mediaBytes(row), 0);
+    while (this.state.messages.length > 160 || size > 120000 || images > 1200000) {
+      const row = this.state.messages.shift()!; size -= row.text.length + (row.output?.length ?? 0); images -= mediaBytes(row); this.state.truncated = true;
     }
     this.changed();
   }
@@ -97,9 +107,18 @@ export class NativeController {
       if (this.state.owner !== input.clientId) throw new BridgeError('control_required', '请先点击「在手机继续」。', 409);
       if (input.action === 'release') this.desktop();
     }
-    const promise = input.action === 'claim' || input.action === 'release'
+    if (input.action === 'prompt_idle' && (this.promptInFlight || this.state.status !== 'idle' || this.state.requests.length)) throw new BridgeError('queue_not_idle', '会话正在工作，下一轮消息继续等待。', 409);
+    const prompt = input.action === 'prompt' || input.action === 'prompt_idle';
+    if (prompt) this.promptInFlight++;
+    const promise = (input.action === 'claim' || input.action === 'release'
       ? Promise.resolve({ ok: true, epoch: this.state.epoch })
-      : this.perform ? this.perform(input) : Promise.reject(new BridgeError('native_unavailable', '原生连接尚未就绪。', 409));
+      : this.perform ? Promise.resolve().then(() => this.perform!(input)) : Promise.reject(new BridgeError('native_unavailable', '原生连接尚未就绪。', 409)))
+      .catch(error => {
+        // Only this explicit pre-dispatch rejection is retryable. All uncertain
+        // provider outcomes retain their receipt, including timeouts.
+        if (input.action === 'prompt_idle' && error instanceof BridgeError && error.code === 'queue_not_idle') this.receipts.delete(input.requestId);
+        throw error;
+      }).finally(() => { if (prompt) this.promptInFlight--; });
     this.receipts.set(input.requestId, { fingerprint, promise });
     return promise;
   }

@@ -68,7 +68,7 @@ export async function projectFiles(pane: Pane, params: URLSearchParams): Promise
       });
       streamed = true;
       const encoded = encodeURIComponent(name).replace(/['()*]/g, value => '%' + value.charCodeAt(0).toString(16));
-      return new Response(stream, { headers: { 'content-type': 'application/octet-stream', 'content-length': String(info.size), 'content-disposition': `attachment; filename="download"; filename*=UTF-8''${encoded}` } });
+      return new Response(stream, { headers: { 'content-type': 'application/octet-stream', 'content-length': String(info.size), 'x-file-size': String(info.size), 'content-disposition': `attachment; filename="download"; filename*=UTF-8''${encoded}` } });
     }
     const result: FilePreview = { name, path: input, size: info.size, kind: 'binary', truncated: false };
     if (mime && info.size <= IMAGE_LIMIT) {

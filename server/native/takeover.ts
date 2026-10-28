@@ -11,9 +11,11 @@ import type { NativeState } from '../../shared/native';
 import type { TakeoverState } from '../../shared/takeover';
 import { findNative, nativeCall } from './registry';
 import { codexOptions } from '../../scripts/agent-options';
+import { restartNative } from './restart';
+import { createHash } from 'node:crypto';
 
 type ProcessInfo = { shell_pid?: number; foreground_processes?: { pid: number; argv?: string[] }[] };
-type Job = TakeoverState & { socket: string; pane: Pane; clientId: string; cancelled: boolean; at: number };
+type Job = TakeoverState & { socket: string; pane: Pane; clientId: string; cancelled: boolean; at: number; runtimeId?: string };
 export async function codexSessionForProcess(pid: number, home: string): Promise<string> {
   const ids = new Set<string>(), processes = [pid];
   for (let index = 0; index < processes.length && index < 64; index++) {
@@ -53,21 +55,32 @@ function changed(): never { throw new BridgeError('agent_changed', '当前终端
 /** First-time setup is explicit; ordinary handoffs only change fenced ownership. */
 export class Takeovers {
   private jobs = new Map<string, Job>();
+  private starts = new Map<string, Promise<TakeoverState>>();
   private closed = false;
   constructor(private config: BridgeConfig, private root: string, private activity?: () => void) {}
   get busy(): boolean { return [...this.jobs.values()].some(job => !COMPLETE.has(job.phase)); }
+  replacing(socket: string, pane: string): boolean { return [...this.jobs.values()].some(job => job.socket === socket && job.pane.pane_id === pane && job.operation === 'restart' && !job.cancellable && !COMPLETE.has(job.phase)); }
   close(): void { this.closed = true; for (const job of this.jobs.values()) if (job.cancellable) job.cancelled = true; }
-  private view(job: Job): TakeoverState { const { id, phase, message, cancellable } = job; return { id, phase, message, cancellable }; }
+  private view(job: Job): TakeoverState { const { id, phase, message, cancellable, operation } = job; return { id, phase, message, cancellable, operation }; }
   get(socket: string, pane: Pane): TakeoverState | null {
     const job = [...this.jobs.values()].find(row => row.socket === socket && row.pane.pane_id === pane.pane_id && row.pane.terminal_id === pane.terminal_id);
     return job ? this.view(job) : null;
   }
-  start(socket: string, pane: Pane, input: Record<string, unknown>): TakeoverState {
+  start(socket: string, pane: Pane, input: Record<string, unknown>): Promise<TakeoverState> {
+    const key = socket + '\0' + pane.terminal_id;
+    const previous = this.starts.get(key) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(() => this.begin(socket, pane, input));
+    this.starts.set(key, next);
+    void next.finally(() => { if (this.starts.get(key) === next) this.starts.delete(key); }).catch(() => {});
+    return next;
+  }
+  private async begin(socket: string, pane: Pane, input: Record<string, unknown>): Promise<TakeoverState> {
     if (input.terminalId !== pane.terminal_id || input.conversation !== pane.agent_session?.value || input.agent !== pane.agent) changed();
     if (!/^[\w-]{8,128}$/.test(String(input.clientId ?? '')) || input.clientId === 'desktop') throw new BridgeError('invalid_input', '设备标识尚未就绪。', 400);
     const existing = [...this.jobs.values()].find(row => row.socket === socket && row.pane.terminal_id === pane.terminal_id && !COMPLETE.has(row.phase));
     if (existing) {
       if (existing.clientId !== input.clientId) throw new BridgeError('takeover_busy', '另一台设备正在启用接管。', 409);
+      if (input.cancel !== true && (existing.operation === 'restart') !== (input.restart === true)) throw new BridgeError('takeover_busy', '此终端的操作尚未结束，请先等待或取消。', 409);
       if (input.cancel === true && existing.cancellable) existing.cancelled = true;
       return this.view(existing);
     }
@@ -75,7 +88,17 @@ export class Takeovers {
     for (const [id, job] of this.jobs) if (COMPLETE.has(job.phase) && Date.now() - job.at > 600000) this.jobs.delete(id);
     if (this.jobs.size >= 128) throw new BridgeError('takeover_limit', '接管操作过多，请稍后重试。', 429);
     for (const [id, job] of this.jobs) if (job.socket === socket && job.pane.terminal_id === pane.terminal_id) this.jobs.delete(id);
-    const job: Job = { id: randomUUID(), phase: 'checking', message: '正在检查当前会话…', cancellable: true, socket, pane: structuredClone(pane), clientId: String(input.clientId), cancelled: false, at: Date.now() };
+    if (input.restart === true) {
+      if (!/^[\w-]{8,128}$/.test(String(input.requestId ?? ''))) throw new BridgeError('invalid_input', '重启操作需要唯一请求 ID。', 400);
+      const root = join(this.config.stateDir, 'restart-receipts'); await mkdir(root, { recursive: true, mode: 0o700 });
+      const receipt = join(root, createHash('sha256').update(socket + '\0' + input.requestId).digest('hex') + '.json');
+      try { await writeFile(receipt, JSON.stringify({ terminal: pane.terminal_id, runtimeId: input.runtimeId, clientId: input.clientId }), { mode: 0o600, flag: 'wx' }); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        throw new BridgeError('delivery_unknown', '该重启请求已经提交，请核对当前实例；不会重复启动。', 409);
+      }
+    }
+    const job: Job = { id: randomUUID(), operation: input.restart === true ? 'restart' : 'takeover', runtimeId: typeof input.runtimeId === 'string' ? input.runtimeId : undefined, phase: 'checking', message: '正在检查当前会话…', cancellable: true, socket, pane: structuredClone(pane), clientId: String(input.clientId), cancelled: false, at: Date.now() };
     this.jobs.set(job.id, job);
     void this.run(job).catch(error => { job.phase = job.cancelled ? 'cancelled' : 'failed'; job.message = job.cancelled ? '已取消，当前 agent 保持运行。' : error instanceof Error ? error.message : '启用失败。'; job.cancellable = false; });
     return this.view(job);
@@ -92,7 +115,7 @@ export class Takeovers {
     return current;
   }
   private async info(job: Job): Promise<ProcessInfo> { return (await rpc<{ process_info: ProcessInfo }>(job.socket, 'pane.process_info', { pane_id: job.pane.pane_id })).process_info; }
-  private async claim(job: Job, expected?: string, expectedPid?: number): Promise<boolean> {
+  private async claim(job: Job, expected?: string, expectedPid?: number, finish = true): Promise<boolean> {
     const pane = await this.pane(job, true);
     const record = await findNative(join(this.config.stateDir, 'native'), job.socket, pane);
     if (!record) return false;
@@ -107,10 +130,23 @@ export class Takeovers {
     if (pane.agent && pane.agent !== record.provider) changed();
     this.progress(job, 'claiming', '正在切换到手机…', false);
     await nativeCall(record.endpoint, { method: 'action', input: { action: 'claim', runtimeId: state.runtimeId, conversationId: state.conversationId, epoch: state.epoch, clientId: job.clientId, requestId: 'takeover-' + job.id } });
-    this.progress(job, 'ready', '已接管，可以继续当前对话。', false); return true;
+    if (finish) this.progress(job, 'ready', '已接管，可以继续当前对话。', false); return true;
   }
   private async run(job: Job): Promise<void> {
     await this.pane(job);
+    if (job.operation === 'restart') {
+      const record = await findNative(join(this.config.stateDir, 'native'), job.socket, job.pane);
+      if (record) {
+        await restartNative(this.config, this.root, job, record, {
+          pane: released => this.pane(job, released), progress: (phase, message, cancellable = true) => this.progress(job, phase, message, cancellable),
+          claim: conversation => this.claim(job, conversation, undefined, false),
+          complete: () => this.progress(job, 'ready', '已使用新版 mherdr 恢复原对话，可以继续。', false),
+        });
+        return;
+      }
+      if (job.runtimeId) changed();
+      // An unregistered legacy CLI uses the existing exact-identity setup path.
+    }
     if (await this.claim(job)) return;
     if (!['codex', 'pi'].includes(job.pane.agent ?? '')) throw new Error('此 agent 暂不支持原生接管。');
 

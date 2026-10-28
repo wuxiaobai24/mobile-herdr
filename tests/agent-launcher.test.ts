@@ -2,11 +2,19 @@ import { expect, test } from 'bun:test';
 import { mkdtemp, rm, writeFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { codexOptions, piResumeId, assertSessionAvailable } from '../scripts/agent-options';
+import { codexOptions, piResumeId, ompResumeId, assertSessionAvailable } from '../scripts/agent-options';
 import { acquireLaunchLock, clearStaleLaunchLock, launchLockPath, launchLockState } from '../scripts/agent-lock';
 import { createNativeFixture } from './native-fixture';
 
 const id = '12345678-1234-1234-1234-123456789abc';
+
+test('OMP launcher accepts only exact sessions and rejects automatic or unsafe startup modes', async () => {
+  expect(await ompResumeId(['--resume', id, '--model', 'local'])).toBe(id);
+  expect(await ompResumeId([])).toBeUndefined();
+  for (const args of [['--resume'], ['--resume', 'short'], ['--continue'], ['--restore', id], ['--config', 'other'], ['--mode', 'rpc'], ['--goal', 'x'], ['hello']]) {
+    await expect(ompResumeId(args)).rejects.toThrow();
+  }
+});
 
 test('launcher preserves shared Codex config and rejects ambiguous or conflicting entry points before spawning', () => {
   expect(codexOptions(['-c', 'model="local"', '--config=web_search="disabled"', '--enable', 'feature_a', '--disable=feature_b', '--strict-config', '-m', 'local', '--no-alt-screen']).serverArgs)

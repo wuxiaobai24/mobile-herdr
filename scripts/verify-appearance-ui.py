@@ -115,7 +115,7 @@ with sync_playwright() as p:
     expect(frame.locator('#history')).to_be_visible()
     check('touch drag opens scrollable history from an alternate-screen app')
     check('scroll and touch emit zero input frames', not any(f['type']=='input' for f in frames))
-    frame.get_by_text('返回终端', exact=True).click()
+    frame.get_by_text('回到实时', exact=True).click()
     # Normal output has native xterm scrollback; scrolling must keep subsequent output offscreen.
     terminal_peer[0].send(b'\x1b[?1049l\x1b[?1000l\x1b[?1006l' + ''.join(f'normal-{i:03d}\r\n' for i in range(180)).encode())
     frame.locator('#terminal').hover(); page.mouse.wheel(0, -200)

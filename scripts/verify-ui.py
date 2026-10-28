@@ -127,7 +127,7 @@ with sync_playwright() as p:
     page.get_by_role('button', name='查看全部会话', exact=True).click()
     expect(page.get_by_label('搜索会话', exact=True)).to_have_value('')
     page.get_by_label('筛选需要处理的会话', exact=True).click()
-    expect(page.get_by_label('打开 w3:p1', exact=True)).to_be_visible()
+    expect(page.get_by_role('button', name='处理 MacBook Pro default w3:p1', exact=True)).to_be_visible()
     expect(page.get_by_label('打开 w1:p1', exact=True)).not_to_be_visible()
     page.get_by_label('显示全部会话', exact=True).click()
     expect(page.get_by_label('打开 w1:p1', exact=True)).to_be_visible()

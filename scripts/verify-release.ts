@@ -119,6 +119,7 @@ try {
   let hostError = '';
   host = Bun.spawn([process.execPath, 'run', join(installation, 'scripts/native-host.ts')], { cwd: directory, stdout: 'ignore', stderr: 'pipe', env: {
     ...env, MOBILE_HERDR_NATIVE_DIRECTORY: hostDirectory, MOBILE_HERDR_CODEX_BINARY: process.execPath,
+    HERDR_SOCKET: fixture.config.socket, HERDR_SOCKET_PATH: fixture.config.socket, HERDR_PANE_ID: 'owned-package-test',
     MOBILE_HERDR_CODEX_SERVER_ARGS: JSON.stringify([resolve(import.meta.dir, '../tests/fake-codex.ts')]),
     MOBILE_HERDR_NATIVE_IDENTITY: JSON.stringify({ herdrSocket: fixture.config.socket, paneId: 'owned-package-test', terminalId: 'owned-package-terminal' }),
   } });

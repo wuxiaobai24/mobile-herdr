@@ -13,7 +13,7 @@ export function exportDiagnostics(report: DiagnosticReport, clientVersion: strin
     platform: ['linux', 'darwin', 'win32'].includes(report.platform) ? report.platform : 'other', arch: ['x64', 'arm64'].includes(report.arch) ? report.arch : 'other',
     herdr: { connected: !!report.herdr.connected, version: report.herdr.version ? safeVersion(report.herdr.version) : undefined, protocol: report.herdr.protocol ? safeCount(report.herdr.protocol) : undefined, sessionCount: safeCount(report.herdr.sessionCount) },
     ssh: { enabled: !!report.ssh.enabled, online: safeCount(report.ssh.online), connecting: safeCount(report.ssh.connecting), offline: safeCount(report.ssh.offline), disabled: safeCount(report.ssh.disabled) },
-    native: report.native ? { provider: ['codex', 'pi'].includes(report.native.provider) ? report.native.provider : 'other', connected: !!report.native.connected, status: ['idle', 'working', 'blocked', 'offline'].includes(report.native.status) ? report.native.status : 'unknown', control: report.native.control === 'desktop' ? 'desktop' : 'mobile', pending: safeCount(report.native.pending) } : undefined,
+    native: report.native ? { provider: ['codex', 'pi', 'omp'].includes(report.native.provider) ? report.native.provider : 'other', connected: !!report.native.connected, status: ['idle', 'working', 'blocked', 'offline'].includes(report.native.status) ? report.native.status : 'unknown', control: report.native.control === 'desktop' ? 'desktop' : 'mobile', pending: safeCount(report.native.pending) } : undefined,
     capabilities: { heartbeat: !!report.capabilities.heartbeat, history: !!report.capabilities.history, diff: !!report.capabilities.diff }, managed: !!report.managed,
   }, null, 2);
 }

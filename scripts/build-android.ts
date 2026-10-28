@@ -1,4 +1,5 @@
-import { chmod, copyFile, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { version } from '../package.json';
+import { chmod, copyFile, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
@@ -35,7 +36,9 @@ if (!buildTools) throw new Error('Android SDK build-tools missing: cannot verify
 await run([join(sdk, 'build-tools', buildTools, 'apksigner'), 'verify', apk], { quiet: true });
 const destination = join(root, 'artifacts/android/mobile-herdr.apk');
 await mkdir(join(root, 'artifacts/android'), { recursive: true });
-await copyFile(apk, destination);
+await copyFile(apk, destination + '.next');
+await rename(destination + '.next', destination);
 const digest = createHash('sha256').update(await readFile(destination)).digest('hex');
+await writeFile(destination + '.json', JSON.stringify({ version, size: (await stat(destination)).size, sha256: digest }));
 await writeFile(destination + '.sha256', `${digest}  mobile-herdr.apk\n`);
 console.log(`Android APK: ${destination}\nSigning key: ${keystore}\nKeep this key and its password to install future updates over this APK.`);

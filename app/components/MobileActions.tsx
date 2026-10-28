@@ -1,4 +1,4 @@
-import { Bell, Download, FileDiff, Folder, Monitor, Palette, Search, Server, X } from 'lucide-react-native';
+import { Bell, Download, FileDiff, Folder, Layers2, Monitor, Palette, Search, Server, X } from 'lucide-react-native';
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { useTheme } from '../theme';
 
@@ -8,9 +8,10 @@ interface Props {
   onNativeDetails?: () => void; nativeLabel: string;
   onInstall?: () => void;
   onFiles: () => void; onChanges: () => void; onUpdate: () => void;
+  onLayout?: () => void;
 }
 
-export function MobileActions({ visible, onClose, title, target, status, onReading, onAppearance, onMachines, onAttention, onNativeDetails, nativeLabel, onInstall, onFiles, onChanges, onUpdate }: Props): React.JSX.Element {
+export function MobileActions({ visible, onClose, title, target, status, onReading, onAppearance, onMachines, onAttention, onNativeDetails, nativeLabel, onInstall, onFiles, onChanges, onUpdate, onLayout }: Props): React.JSX.Element {
   const { colors, styles } = useTheme();
   const actions = [
     { label: '浏览项目文件', icon: Folder, run: onFiles },
@@ -18,6 +19,7 @@ export function MobileActions({ visible, onClose, title, target, status, onReadi
     { label: '查找与历史', icon: Search, run: onReading },
     ...(onNativeDetails ? [{ label: nativeLabel, icon: Monitor, run: onNativeDetails }] : []),
     { label: '查看需要处理的会话', icon: Bell, run: onAttention },
+    ...(onLayout ? [{ label: '工作区与标签页', icon: Layers2, run: onLayout }] : []),
     { label: '管理开发机', icon: Server, run: onMachines },
     { label: '外观设置', icon: Palette, run: onAppearance },
     { label: '版本更新', icon: Download, run: onUpdate },

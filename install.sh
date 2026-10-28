@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # Mobile Herdr installer. Downloads a tested release; never starts Herdr or an agent.
-VERSION=0.2.2-beta.8
+VERSION=0.2.2-beta.12
 PREFIX=${MOBILE_HERDR_INSTALL_DIR:-"$HOME/.local/share/mobile-herdr"}
 BIN_DIR=${MOBILE_HERDR_BIN_DIR:-"$HOME/.local/bin"}
 INSTALL_BUN=1

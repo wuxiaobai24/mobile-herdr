@@ -1,9 +1,10 @@
 import type { NativeState } from './native';
 
-export interface ChatCommand { name: string; title: string; description: string }
+export interface ChatCommand { name: string; title: string; description: string; terminal?: boolean }
 export const chatCommands: ChatCommand[] = [
   { name: 'model', title: '选择模型', description: '切换当前会话可用的模型' },
   { name: 'reasoning', title: '思考强度', description: '选择当前模型支持的强度' },
+  { name: 'skills', title: '选择技能', description: '搜索当前项目可用的 Codex skills' },
   { name: 'stop', title: '停止当前任务', description: '打断执行，保留对话' },
   { name: 'compact', title: '压缩上下文', description: '保留摘要，继续当前会话' },
   { name: 'plan', title: '计划模式', description: '下次任务先制定计划' },
@@ -19,6 +20,25 @@ export const chatCommands: ChatCommand[] = [
   { name: 'help', title: '快捷选项', description: '查看可用操作与命令' },
 ];
 
+// CLI commands are handled by the TUI, not by sending slash text to the model.
+// Keep these discoverable while making their terminal requirement explicit.
+export const codexTerminalCommands: ChatCommand[] = [
+  ['permissions', '权限设置'], ['ide', 'IDE 上下文'], ['keymap', '键盘快捷键'], ['vim', 'Vim 输入模式'],
+  ['setup-default-sandbox', 'Windows 沙箱设置'], ['agents', 'Agent 列表'], ['subagents', '子 Agent'],
+  ['apps', '应用连接器'], ['plugins', '插件'], ['hooks', '生命周期钩子'], ['clear', '清屏并新建对话'],
+  ['rename', '重命名对话'], ['archive', '归档对话'], ['delete', '删除对话'], ['copy', '复制最近回复'],
+  ['diff', 'Git Diff'], ['exit', '退出 CLI'], ['quit', '退出 CLI'], ['experimental', '实验功能'],
+  ['approve', '重试被拒绝的操作'], ['memories', '记忆设置'], ['import', '导入配置与会话'],
+  ['feedback', '反馈'], ['init', '生成 AGENTS.md'], ['logout', '退出登录'], ['mcp', 'MCP 工具'],
+  ['mention', '附加文件'], ['fast', '快速服务档位'], ['goal', '任务目标'], ['ps', '后台终端'],
+  ['fork', '分叉对话'], ['app', '在桌面应用继续'], ['side', '临时侧边对话'], ['btw', '临时侧边对话'],
+  ['raw', '原始滚动模式'], ['resume', '选择历史会话'], ['new', '新建对话'], ['usage', '账号用量'],
+  ['debug-config', '配置诊断'], ['statusline', '状态栏设置'], ['title', '终端标题'], ['theme', '终端主题'],
+  ['pets', '终端宠物'], ['pet', '终端宠物'], ['tui', '终端显示模式'], ['export', '导出对话'],
+  ['recap', '对话摘要'], ['cd', '切换目录'], ['pwd', '当前目录'], ['cwd', '当前目录'],
+  ['worktree', 'Git 工作树'], ['daemon', '后台服务控制'], ['warnings', '警告与诊断'],
+].map(([name, title]) => ({ name: name!, title: title!, description: '在原终端使用 · 可用性取决于 Codex 版本', terminal: true }));
+
 export function parseChatCommand(text: string): { name: string; argument: string } | undefined {
   const match = text.trim().match(/^\/([\w:.-]+)(?:\s+([\s\S]*))?$/);
   if (!match) return;
@@ -31,16 +51,19 @@ export function availableChatCommands(state?: NativeState | null): ChatCommand[]
   const builtins = chatCommands.filter(command => {
     if (command.name === 'model') return !!state?.capabilities.models;
     if (command.name === 'reasoning') return !!state?.capabilities.reasoning;
+    if (command.name === 'skills') return !!state?.capabilities.skills;
     if (command.name === 'compact') return !!state?.capabilities.compact;
     if (command.name === 'plan' || command.name === 'build') return !!state?.capabilities.modes;
     if (command.name === 'review') return !!state?.capabilities.review;
     if (command.name === 'desktop') return !!state;
     return true;
   });
-  const reserved = new Set(builtins.map(command => command.name));
-  return [...builtins, ...(state?.commands ?? []).filter(command => !reserved.has(command.name)).map(command => ({
+  const reserved = new Set(chatCommands.map(command => command.name));
+  const commands = [...builtins, ...(state?.commands ?? []).filter(command => !reserved.has(command.name)).map(command => ({
     name: command.name, title: '/' + command.name, description: command.description,
   }))];
+  const provided = new Set(commands.map(command => command.name));
+  return state?.provider === 'codex' ? [...commands, ...codexTerminalCommands.filter(command => !provided.has(command.name))] : commands;
 }
 
 export function reasoningLabel(value: string): string {

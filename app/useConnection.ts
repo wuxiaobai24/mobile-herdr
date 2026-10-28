@@ -50,5 +50,6 @@ export function useConnection(machine: Machine | undefined, session: string, pan
     }, (status, error) => { setStatus(status); setError(error ?? ''); });
   }, [machine?.id, machine?.url, machine?.token, session, pane, generation, networkOnline, active]);
   return { snapshot: snapshotScope === scope ? snapshot : undefined, chat: conversationScope === paneScope ? chat : undefined,
-    native: conversationScope === paneScope ? native : undefined, status, error, reconnect };
+    native: conversationScope === paneScope ? native : undefined, status, error, reconnect,
+    acceptSnapshot(value: Snapshot): void { setSnapshot(value); setSnapshotScope(scope); } };
 }

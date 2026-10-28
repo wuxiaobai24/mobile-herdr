@@ -19,11 +19,14 @@ export interface BridgeInfo { name: string; version: string; sessions: Session[]
 export interface ChatMessage {
   id: string; role: 'user' | 'assistant' | 'tool'; text: string; timestamp?: string;
   toolName?: string; output?: string; truncated?: boolean;
+  toolStatus?: 'running' | 'completed' | 'failed'; durationMs?: number; exitCode?: number;
+  media?: ChatMedia[];
 }
+export interface ChatMedia { type: 'image' | 'file'; name: string; url?: string; path?: string; attachmentId?: string }
 export interface TranscriptCandidate { id: string; title: string; updated: number; agent: string }
 export interface HistoryPage { identity: string; messages: ChatMessage[]; hasMore: boolean; cursor?: string; limited?: boolean }
 export interface Conversation {
-  source: 'codex' | 'claude' | 'pi' | 'unavailable'; messages: ChatMessage[];
+  source: 'codex' | 'claude' | 'pi' | 'omp' | 'unavailable'; messages: ChatMessage[];
   binding: 'reported' | 'selected' | 'none'; candidates: TranscriptCandidate[];
   truncated: boolean;
   history?: Omit<HistoryPage, 'messages'>;

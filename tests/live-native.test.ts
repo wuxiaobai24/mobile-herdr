@@ -19,7 +19,7 @@ live('installed Codex: native phone turn and official TUI share the same app-ser
   const model = localModel(); const home = join(directory, 'home');
   await mkdir(home);
   await writeFile(join(home, 'config.toml'), `model="fixture-model"\nmodel_provider="fixture"\n[model_providers.fixture]\nname="fixture"\nbase_url="${model.url}"\nwire_api="responses"\nrequires_openai_auth=false\n`);
-  const env = { ...process.env, CODEX_HOME: home, TERM: 'xterm-256color' };
+  const env = { ...process.env, CODEX_HOME: home, TERM: 'xterm-256color', HERDR_SOCKET: undefined, HERDR_SOCKET_PATH: undefined, HERDR_PANE_ID: undefined, HERDR_TAB_ID: undefined, HERDR_WORKSPACE_ID: undefined, MOBILE_HERDR_NATIVE_IDENTITY: undefined, MOBILE_HERDR_NATIVE_DIRECTORY: undefined };
   const control = new NativeController(directory, { herdrSocket: join(directory, 'herdr.sock'), paneId: 'test:p1', terminalId: 'owned-test' }, 'codex');
   const runtime = new CodexRuntime(control, process.env.MOBILE_HERDR_CODEX_BINARY ?? 'codex', [], env);
   let tui: Bun.Subprocess | undefined; let terminal: Bun.Terminal | undefined;
@@ -38,7 +38,7 @@ live('installed Codex: native phone turn and official TUI share the same app-ser
     expect(thread).toBeTruthy();
     let sequence = 0;
     async function act(action: NativeAction['action'], values = {}) { return control.dispatch({ action, runtimeId: control.state.runtimeId, clientId: 'test-phone', epoch: control.state.epoch, requestId: 'real-codex-' + ++sequence, ...values }); }
-    await act('claim'); await act('mode', { mode: 'plan' }); await act('prompt', { text: 'Return the confirmation text only.' });
+    await act('claim'); await act('mode', { mode: 'plan' }); await act('prompt_idle', { text: 'Return the confirmation text only.' });
     await until(() => control.state.status === 'idle' && control.state.messages.some(row => row.text === '本地隔离验证成功'));
     expect(model.requests).toBeGreaterThan(0);
     expect(control.state.mode).toBe('plan');
@@ -63,7 +63,7 @@ live('installed Pi: same process forwards extension approvals and questions, the
   const commandMarker = join(directory, 'slash-command.txt');
   await writeFile(questions, `import {writeFile} from 'node:fs/promises'; export default function(pi) { pi.registerCommand('fixture-command', {description:'Owned slash command',handler:async(args)=>{await writeFile(${JSON.stringify(commandMarker)},args);}}); pi.on('before_agent_start', async (_event, ctx) => { if (!await ctx.ui.confirm('本次工具确认', '这是隔离测试')) throw Error('declined'); const answer=await ctx.ui.select('选择主题', ['深色','浅色']); if(answer!=='深色') throw Error('unexpected answer'); }); }`);
   const child = Bun.spawn([process.env.MOBILE_HERDR_PI_BINARY ?? 'pi', '--mode', 'rpc', '--no-extensions', '--no-mcp', '--no-context-files', '--no-skills', '--no-prompt-templates', '--no-themes', '--extension', resolve('plugins/pi/mobile-herdr.ts'), '--extension', questions, '--model', 'fixture/fixture-model', '--session-dir', join(directory, 'sessions')], {
-    cwd: directory, env: { ...process.env, PI_CODING_AGENT_DIR: home, MOBILE_HERDR_NATIVE_DIRECTORY: native, MOBILE_HERDR_NATIVE_IDENTITY: JSON.stringify({ herdrSocket: join(directory, 'herdr.sock'), paneId: 'test:p1', terminalId: 'owned-test' }) }, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe',
+    cwd: directory, env: { ...process.env, HERDR_SOCKET: join(directory, 'herdr.sock'), HERDR_SOCKET_PATH: join(directory, 'herdr.sock'), HERDR_PANE_ID: 'test:p1', HERDR_TAB_ID: undefined, HERDR_WORKSPACE_ID: undefined, PI_CODING_AGENT_DIR: home, MOBILE_HERDR_NATIVE_DIRECTORY: native, MOBILE_HERDR_NATIVE_IDENTITY: JSON.stringify({ herdrSocket: join(directory, 'herdr.sock'), paneId: 'test:p1', terminalId: 'owned-test' }) }, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe',
   });
   void (async () => { for await (const _ of child.stdout) {} })();
   void (async () => { for await (const _ of child.stderr) {} })();
@@ -72,7 +72,7 @@ live('installed Pi: same process forwards extension approvals and questions, the
     await until(async () => { const name = (await readdir(native).catch(() => [])).find(name => name.endsWith('.json')); if (name) record = JSON.parse(await readFile(join(native, name), 'utf8')); return !!record; });
     async function state(): Promise<NativeState> { return nativeCall(record.endpoint, { method: 'state' }); }
     let sequence = 0;
-    async function act(action: NativeAction['action'], values = {}) { const current = await state(); return nativeCall(record.endpoint, { method: 'action', input: { action, runtimeId: current.runtimeId, clientId: 'test-phone', epoch: current.epoch, requestId: 'real-pi-' + ++sequence, ...values } }); }
+    async function act(action: NativeAction['action'], values = {}) { const current = await state(); return nativeCall(record.endpoint, { method: 'action', input: { action, runtimeId: current.runtimeId, clientId: 'test-phone', conversationId: current.conversationId, epoch: current.epoch, requestId: 'real-pi-' + ++sequence, ...values } }); }
     const before = await state(); await act('claim');
     expect(before.commands?.some(command => command.name === 'fixture-command')).toBe(true);
     expect(before.capabilities.reasoning).toBe(true);
@@ -81,8 +81,9 @@ live('installed Pi: same process forwards extension approvals and questions, the
     expect(model.requests).toBe(0);
     await act('reasoning', { reasoningEffort: 'high' });
     expect((await state()).reasoningEffort).toBe('high');
-    await act('prompt', { text: 'Return the confirmation text only.' });
+    await act('prompt_idle', { text: 'Return the confirmation text only.' });
     await until(async () => (await state()).requests[0]?.kind === 'approval');
+    await expect(act('prompt_idle', { text: 'Must wait for the next turn.' })).rejects.toHaveProperty('code', 'queue_not_idle');
     await act('reply', { request: (await state()).requests[0].id, decision: 'accept' });
     await until(async () => (await state()).requests[0]?.kind === 'question');
     await act('reply', { request: (await state()).requests[0].id, answers: { answer: ['深色'] } });

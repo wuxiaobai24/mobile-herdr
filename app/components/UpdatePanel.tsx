@@ -5,12 +5,19 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Machine } from '../../shared/protocol';
 import type { UpdateState } from '../../server/updates';
 import { ApiError, api, machineScope, requestId } from '../../shared/client';
+import { useFileDownload } from '../useFileDownload';
+import { DownloadStatus } from './DownloadStatus';
+import { fileSize } from '../../shared/files';
 import { useTheme } from '../theme';
 
 function UpdateContent({ machine, onClose }: { machine: Machine; onClose: () => void }): React.JSX.Element {
   const { colors, styles } = useTheme(), insets = useSafeAreaInsets();
   const [state, setState] = useState<UpdateState>();
   const [checkError, setCheckError] = useState(''), [submitError, setSubmitError] = useState(''), [pending, setPending] = useState(false), [revision, setRevision] = useState(0);
+  const transfer = useFileDownload();
+  const [apk, setApk] = useState<{ available: boolean; version?: string; size: number }>();
+  const [apkNotice, setApkNotice] = useState('');
+  useEffect(() => { let live = true; void api<typeof apk>(machine, '/api/android').then(value => { if (live) setApk(value); }).catch(() => {}); return () => { live = false; }; }, [machine]);
   const generation = useRef(0), writing = useRef(false), delivery = useRef<string>(undefined);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -53,7 +60,10 @@ function UpdateContent({ machine, onClose }: { machine: Machine; onClose: () => 
     </ScrollView>
     {!!error && !state && <Pressable accessibilityRole="button" accessibilityLabel="重试检查更新" onPress={() => { setCheckError(''); setRevision(value => value + 1); }} style={styles.button}><RefreshCw size={17} color={colors.accentInk} /><Text style={styles.buttonText}>重试</Text></Pressable>}
     {state?.phase === 'ready' && !state.available && Platform.OS === 'web' ? <Pressable accessibilityRole="button" onPress={() => window.location.reload()} style={styles.button}><RefreshCw size={17} color={colors.accentInk} /><Text style={styles.buttonText}>加载新版本</Text></Pressable> : <Pressable accessibilityRole="button" accessibilityLabel="一键更新到最新版本" disabled={disabled} onPress={() => void update()} style={[styles.button, { opacity: disabled ? 0.45 : 1 }]}>{active ? <ActivityIndicator color={colors.accentInk} /> : <Download size={17} color={colors.accentInk} />}<Text style={styles.buttonText}>{active ? '更新中' : '更新到最新版本'}</Text></Pressable>}
-    {Platform.OS === 'android' && state?.latest && <Pressable accessibilityRole="button" accessibilityLabel="下载最新 Android APK" onPress={() => void Linking.openURL(`https://github.com/wuxiaobai24/mobile-herdr/releases/tag/v${encodeURIComponent(state.latest!)}`).catch(() => setSubmitError('无法打开下载页。'))} style={[styles.button, styles.secondary]}><Download size={17} color={colors.text} /><Text style={styles.text}>Android APK</Text></Pressable>}
+    {apk?.available && <Pressable accessibilityRole="button" accessibilityLabel="下载最新 Android APK" disabled={transfer.busy} onPress={() => void transfer.start(machine, '/api/android?mode=download', 'mobile-herdr.apk')} style={[styles.button, styles.secondary, { opacity: transfer.busy ? 0.5 : 1 }]}><Download size={17} color={colors.text} /><Text numberOfLines={2} style={[styles.text, { flexShrink: 1 }]}>{transfer.busy ? 'APK 下载中' : `下载本机 APK${apk.version ? ' · ' + apk.version : ''}`} · {fileSize(apk.size)}</Text></Pressable>}
+    <DownloadStatus download={transfer} />
+    {state?.latest && <Pressable accessibilityRole="button" accessibilityLabel="打开 Android APK 发布页" onPress={() => void Linking.openURL(`https://github.com/wuxiaobai24/mobile-herdr/releases/tag/v${encodeURIComponent(state.latest!)}`).then(() => setApkNotice('已打开发布页，请在浏览器下载 APK，并查看浏览器下载列表。')).catch(() => setApkNotice('无法打开发布页，请检查浏览器。'))} style={[styles.button, styles.secondary]}><Text style={styles.text}>打开 APK 发布页</Text></Pressable>}
+    {!!apkNotice && <Text accessibilityLiveRegion="polite" style={styles.muted}>{apkNotice}</Text>}
   </View>;
 }
 export function UpdatePanel({ visible, onClose, machine }: { visible: boolean; onClose: () => void; machine?: Machine }): React.JSX.Element {

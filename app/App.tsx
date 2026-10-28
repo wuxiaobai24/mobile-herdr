@@ -1,7 +1,7 @@
 import { FileBrowser } from './components/FileBrowser';
 import { UpdatePanel } from './components/UpdatePanel';
 import { useTakeover } from './useTakeover';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, BackHandler, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import AppStatusBar from './components/AppStatusBar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -28,6 +28,16 @@ import { MobileActions } from './components/MobileActions';
 import { PwaInstallPanel } from './components/PwaInstallPanel';
 import { ChangesPanel } from './components/ChangesPanel';
 import { usePwaInstall } from './usePwaInstall';
+import { LayoutManager, type LayoutTarget } from './components/LayoutManager';
+import { QueuedMessages } from './components/QueuedMessages';
+import { copyText } from './clipboard';
+import { PaneTabs } from './components/PaneTabs';
+import { AttentionInbox } from './components/AttentionInbox';
+import { useMessageQueue } from './useMessageQueue';
+import { usePaneNavigation } from './usePaneNavigation';
+import { useAttention } from './useAttention';
+import { matchingPanes, workspacePane } from '../shared/navigation';
+import type { AttentionTarget } from '../shared/attention';
 
 function stateColor(status: string, colors: ThemeColors): string {
   if (status === 'working') return colors.accent;
@@ -110,11 +120,14 @@ function Workbench(): React.JSX.Element {
   const [connecting, setConnecting] = useState(false);
   const [showConnect, setShowConnect] = useState(false);
   const [drawer, setDrawer] = useState(false);
+  const [layoutTarget, setLayoutTarget] = useState<LayoutTarget>();
   useEffect(() => { if (desktop) setDrawer(false); }, [desktop]);
   const [machinePanel, setMachinePanel] = useState(false);
   const [mode, setMode] = useState<ChatMode>('chat');
   const [query, setQuery] = useState('');
   const [attention, setAttention] = useState(false);
+  const [sessionPicker, setSessionPicker] = useState(false);
+  const pendingNavigation = useRef<AttentionTarget | undefined>(undefined);
   const [notice, setNotice] = useState('');
   const [noticeError, setNoticeError] = useState(false);
   const [help, setHelp] = useState(false);
@@ -138,13 +151,18 @@ function Workbench(): React.JSX.Element {
   const originalPane = snapshot?.panes.find(item => item.pane_id === paneId);
   const native = connection.native;
   const control = useNativeControl(machine, session, paneId, native);
-  const takeover = useTakeover(machine, session, originalPane, control.clientId, nativeDetailsOpen);
+  const messageQueue = useMessageQueue(machine, session, control.clientId);
+  const takeover = useTakeover(machine, session, originalPane, control.clientId, nativeDetailsOpen, native);
   const pane = originalPane && native ? { ...originalPane, agent: native.provider, agent_status: native.status === 'offline' ? 'unknown' as const : native.status } : originalPane;
+  const navigation = usePaneNavigation(machine, session, originalPane, mode);
+  const attentionSnapshot = useMemo(() => snapshot && native && originalPane ? { ...snapshot, panes: snapshot.panes.map(row => row.pane_id === originalPane.pane_id ? { ...row, agent: native.provider, agent_status: native.status === 'offline' ? 'unknown' as const : native.status } : row) } : snapshot, [snapshot, native?.status, native?.provider, originalPane?.pane_id]);
+  const inbox = useAttention(allMachines, machine, session, attentionSnapshot, pane, connection.status === 'live' && !drawer && !machinePanel, connection.status === 'live');
   const workspace = snapshot?.workspaces.find(item => item.workspace_id === pane?.workspace_id);
   const online = connection.status === 'live';
   const connectionLabel = online ? '实时连接' : connection.status === 'offline' ? '已断开' : '连接中';
   useEffect(() => { setMobileActionsOpen(false); setNativeDetailsOpen(false); setReadingToolsOpen(false); setChangesOpen(false); }, [machine?.id, session, paneId]);
-  const counts = { working: snapshot?.panes.filter(item => item.agent && item.agent_status === 'working').length ?? 0, blocked: snapshot?.panes.filter(item => item.agent && item.agent_status === 'blocked').length ?? 0 };
+  useEffect(() => { setLayoutTarget(undefined); }, [machine?.id, session]);
+  const counts = { working: snapshot?.panes.filter(item => item.agent && item.agent_status === 'working').length ?? 0, blocked: inbox.items.length };
 
   function notify(text: string, error = false): void { setNotice(text); setNoticeError(error); }
   useEffect(() => {
@@ -191,10 +209,14 @@ function Workbench(): React.JSX.Element {
       try {
         const [result, saved] = await Promise.all([connect(machine!), savedLocation]);
         if (cancelled) return;
-        let location: { session?: string; pane?: string } = {};
+        let location: { session?: string; pane?: string; mode?: ChatMode } = {};
         try { location = JSON.parse(saved || '{}'); } catch { /* Use the first available session. */ }
-        const next = result.sessions.find(item => item.id === location.session)?.id ?? result.sessions[0]?.id ?? 'default';
-        setInfo(result); setSession(next); setPaneId(next === location.session && typeof location.pane === 'string' ? location.pane : undefined);
+        const pending = pendingNavigation.current?.machine.id === machine!.id ? pendingNavigation.current : undefined;
+        const requestedSession = pending?.session ?? location.session;
+        const next = result.sessions.find(item => item.id === requestedSession)?.id ?? result.sessions[0]?.id ?? 'default';
+        if (pending && next !== pending.session) { pendingNavigation.current = undefined; notify('目标 session 已关闭，请重新选择。', true); }
+        setInfo(result); setSession(next); setPaneId(pending && next === pending.session ? pending.pane.pane_id : next === location.session && typeof location.pane === 'string' ? location.pane : undefined);
+        setMode(pending ? 'chat' : location.mode === 'terminal' ? 'terminal' : 'chat');
         setConnecting(false); setRestoring(false); setNotice(previous => previous === lastError ? '' : previous);
       } catch (error) {
         if (cancelled) return;
@@ -208,6 +230,14 @@ function Workbench(): React.JSX.Element {
   }, [machine?.id, machine?.url, machine?.token, machine?.remote]);
   useEffect(() => {
     if (!snapshot || restoring) return;
+    const pending = pendingNavigation.current;
+    if (pending && pending.machine.id === machine?.id && pending.session === session) {
+      pendingNavigation.current = undefined;
+      if (!snapshot.panes.some(row => row.pane_id === pending.pane.pane_id && row.terminal_id === pending.pane.terminal_id)) {
+        notify('目标终端已关闭或替换，请重新选择。', true); setPaneId(undefined); return;
+      }
+      setPaneId(pending.pane.pane_id); setMode('chat');
+    }
     if (!snapshot.panes.some(item => item.pane_id === paneId)) {
       const target = snapshot.panes.find(item => item.pane_id === snapshot.focused_pane_id) ?? snapshot.panes.find(item => item.agent) ?? snapshot.panes[0];
       setPaneId(target?.pane_id);
@@ -215,8 +245,8 @@ function Workbench(): React.JSX.Element {
   }, [snapshot, paneId, restoring]);
   useEffect(() => {
     if (!machine || restoring || !paneId || !snapshot?.panes.some(item => item.pane_id === paneId)) return;
-    void Promise.all([saveDraft('active-machine', machine.id), saveDraft(`location:${machineScope(machine)}`, JSON.stringify({ session, pane: paneId }))]).catch(() => notify('无法保存上次打开的会话。', true));
-  }, [machine?.id, machine?.url, session, paneId, restoring, !!snapshot]);
+    void Promise.all([saveDraft('active-machine', machine.id), saveDraft(`location:${machineScope(machine)}`, JSON.stringify({ session, pane: paneId, mode }))]).catch(() => notify('无法保存上次打开的会话。', true));
+  }, [machine?.id, machine?.url, session, paneId, mode, restoring, !!snapshot]);
   useEffect(() => { if (!notice || noticeError) return; const timer = setTimeout(() => setNotice(''), 4500); return () => clearTimeout(timer); }, [notice, noticeError]);
 
   async function addMachine(next: Machine, result: BridgeInfo): Promise<void> {
@@ -231,7 +261,22 @@ function Workbench(): React.JSX.Element {
     try { await saveMachines(saved); setMachines(saved); if (id === activeId) { setPaneId(undefined); setInfo(undefined); setActiveId(saved[0]?.id ?? ''); } if (!saved.length) setShowConnect(true); }
     catch { notify('移除开发机失败。', true); }
   }
-  function selectPane(id: string): void { setPaneId(id); setDrawer(false); setMode('chat'); setNotice(''); }
+  function selectPane(id: string): void {
+    const target = snapshot?.panes.find(row => row.pane_id === id);
+    const visit = target && navigation.memory.tabs[target.tab_id];
+    setPaneId(id); setDrawer(false); setNotice('');
+    setMode(target && visit?.paneId === id && visit.terminalId === target.terminal_id ? visit.mode : 'chat');
+  }
+  function selectAttention(target: AttentionTarget): void {
+    if (target.machine.id === machine?.id && target.session === session) {
+      if (!snapshot?.panes.some(row => row.pane_id === target.pane.pane_id && row.terminal_id === target.pane.terminal_id)) { notify('目标终端已关闭或替换，请刷新后重新选择。', true); return; }
+      selectPane(target.pane.pane_id); setMode('chat'); return;
+    }
+    pendingNavigation.current = target;
+    setDrawer(false); setMode('chat'); setPaneId(undefined);
+    if (target.machine.id === machine?.id) setSession(target.session);
+    else setActiveId(target.machine.id);
+  }
   function changeMode(next: ChatMode): void {
     async function switchView(): Promise<void> {
       if (next === 'terminal' && control.owns) await control.act('release');
@@ -243,12 +288,8 @@ function Workbench(): React.JSX.Element {
   const terminalKey = `${machine?.id}:${session}:${pane?.pane_id}`;
   useEffect(() => { if (mode === 'terminal') setVisitedTerminal(terminalKey); }, [mode, terminalKey]);
   const search = query.trim().toLowerCase();
-  const visibleWorkspaces = snapshot?.workspaces.filter(item => {
-    const panes = snapshot.panes.filter(pane => pane.workspace_id === item.workspace_id);
-    const matchesAttention = !attention || panes.some(pane => pane.agent_status === 'blocked');
-    const searchableText = [item.label, ...panes.flatMap(pane => [pane.label, pane.terminal_title_stripped, pane.cwd, pane.agent, pane.pane_id])].join(' ').toLowerCase();
-    return matchesAttention && (!search || searchableText.includes(search));
-  }) ?? [];
+  const visibleWorkspaces = snapshot?.workspaces.filter(item => matchingPanes(snapshot, item.workspace_id, query).length) ?? [];
+  useEffect(() => { if (navigation.error) notify(navigation.error, true); }, [navigation.error]);
 
   const sidebar = <View style={{ width: desktop ? 270 : '100%', flex: desktop ? undefined : 1, flexShrink: 0, backgroundColor: colors.sidebar, borderRightWidth: 1, borderColor: colors.line }}>
     <View style={[styles.row, { minHeight: 69, paddingHorizontal: 20, justifyContent: 'space-between', borderBottomWidth: 1, borderColor: colors.line }]}>
@@ -256,19 +297,27 @@ function Workbench(): React.JSX.Element {
       {!desktop && <IconButton label="关闭会话列表" onPress={() => setDrawer(false)}><X size={18} color={colors.muted} /></IconButton>}
     </View>
     <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 16 }}>
-    <View style={{ padding: 16, gap: 12 }}>
-      <View style={[styles.row, { backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.line, borderRadius: 10, paddingLeft: 12, gap: 8 }]}><Search size={16} color={colors.dim} /><TextInput accessibilityLabel="搜索会话" value={query} onChangeText={setQuery} placeholder="搜索工作区、agent 或会话" placeholderTextColor={colors.muted} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 16, minHeight: 44 }} />{!!query && <IconButton label="清除搜索" onPress={() => setQuery('')}><X size={16} color={colors.muted} /></IconButton>}</View>
-      <SessionFilters attention={attention} blocked={counts.blocked} onChange={setAttention} />
-      <View style={[styles.row, { justifyContent: 'space-between' }]}><Text style={styles.muted}>Herdr session</Text><Pressable onPress={() => setHelp(true)} accessibilityLabel="Session 说明"><CircleHelp size={14} color={colors.dim} /></Pressable></View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 7 }}>{(info?.sessions ?? [{ id: session, name: session }]).map(item => <Pressable key={item.id} accessibilityRole="button" accessibilityState={{ selected: session === item.id }} onPress={() => { setPaneId(undefined); setSession(item.id); setNotice(''); }} style={[styles.row, { minHeight: 44, gap: 7, backgroundColor: session === item.id ? colors.hover : colors.bg, paddingHorizontal: 12, borderRadius: 8 }]}>{session === item.id && <Check size={13} color={colors.accent} />}<Text style={{ color: session === item.id ? colors.accent : colors.muted, fontSize: 13, fontFamily: mono }}>{item.name}</Text></Pressable>)}</ScrollView>
+    <View style={{ padding: 12, gap: 4 }}>
+      <View style={[styles.row, { backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.line, borderRadius: 10, paddingLeft: 12, gap: 8 }]}><Search size={16} color={colors.dim} /><TextInput accessibilityLabel="搜索会话" value={query} onChangeText={setQuery} placeholder="搜索工作区、标签页或 agent" placeholderTextColor={colors.muted} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 16, minHeight: 44 }} />{!!query && <IconButton label="清除搜索" onPress={() => setQuery('')}><X size={16} color={colors.muted} /></IconButton>}</View>
+      <SessionFilters attention={attention} blocked={inbox.items.length} onChange={setAttention} />
+      <QueuedMessages copyOnly rows={messageQueue.rows} online={online} onError={text => notify(text, true)} onChange={async (row, action) => {
+        if (action === 'recover') { await copyText(row.text); notify('已复制消息内容'); }
+        else await messageQueue.change(row, action);
+      }} />
+      {!attention && <>
+
+        {sessionPicker && <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 7 }}>{(info?.sessions ?? [{ id: session, name: session }]).map(item => <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={`切换 session ${item.id}`} accessibilityState={{ selected: session === item.id }} onPress={() => { setPaneId(undefined); setSession(item.id); setSessionPicker(false); setNotice(''); }} style={[styles.row, { minHeight: 44, gap: 7, backgroundColor: session === item.id ? colors.hover : colors.bg, paddingHorizontal: 12, borderRadius: 8 }]}>{session === item.id && <Check size={13} color={colors.accent} />}<Text style={{ color: session === item.id ? colors.accent : colors.muted, fontSize: 13, fontFamily: mono }}>{item.name}</Text></Pressable>)}</ScrollView>}
+      </>}
     </View>
-    <View style={[styles.row, { paddingHorizontal: 18, paddingTop: 7, paddingBottom: 10, justifyContent: 'space-between' }]}><Text style={styles.muted}>{attention ? '需要你处理' : '工作区'}</Text><Text style={[styles.muted, { fontFamily: mono }]}>{visibleWorkspaces.length.toString().padStart(2, '0')}</Text></View>
+    <View style={[styles.row, { paddingHorizontal: 18, paddingTop: 0, paddingBottom: 0, justifyContent: 'space-between' }]}><Text style={styles.muted}>{attention ? '待处理' : '工作区'}</Text><View style={[styles.row, { gap: 6, flexShrink: 1 }]}>{!attention && <Pressable accessibilityRole="button" accessibilityLabel="选择 Herdr session" onPress={() => setSessionPicker(value => !value)} style={[styles.row, { minHeight: 44, gap: 5, maxWidth: 120, flexShrink: 1 }]}><Text style={[styles.muted, { flex: 1 }]} numberOfLines={1}>{session}</Text><ChevronDown size={14} color={colors.dim} /></Pressable>}{!attention && <Text style={[styles.muted, { fontFamily: mono }]}>{visibleWorkspaces.length.toString().padStart(2, '0')}</Text>}{!attention && <IconButton label="新建工作区" onPress={() => setLayoutTarget({ workspaceId: workspace?.workspace_id ?? snapshot?.workspaces[0]?.workspace_id ?? '', tabId: pane?.tab_id, paneId: pane?.pane_id, action: 'workspace.create' })}><Plus size={17} color={colors.accent} /></IconButton>}</View></View>
     <View style={{ paddingHorizontal: 9, paddingBottom: 12, gap: 8 }}>
       {!snapshot && <View style={{ padding: 20, gap: 12 }}><ActivityIndicator color={colors.accent} /><Text style={styles.muted}>{connecting ? '正在连接开发机…' : '等待 Herdr session…'}</Text></View>}
-      {!!snapshot && !visibleWorkspaces.length && <View style={{ padding: 18, gap: 12 }}><Text style={{ color: colors.text, fontSize: 15 }}>{search ? '没有找到匹配的会话' : attention ? '暂时没有需要处理的会话' : '还没有工作区'}</Text><Text style={styles.muted}>{search ? '试试工作区名称、agent 名称或 pane ID。' : attention ? '可以返回全部会话继续查看进度。' : '在开发机的 Herdr 中打开工作区后，这里会自动更新。'}</Text>{(!!search || attention) && <Pressable accessibilityRole="button" onPress={() => { setQuery(''); setAttention(false); }} style={[styles.button, styles.secondary, { alignSelf: 'flex-start' }]}><Text style={{ color: colors.text, fontSize: 14 }}>查看全部会话</Text></Pressable>}</View>}
-      {visibleWorkspaces.map(item => <View key={item.workspace_id}>
-        <Pressable onPress={() => { const target = snapshot?.panes.find(pane => pane.workspace_id === item.workspace_id && pane.tab_id === item.active_tab_id) ?? snapshot?.panes.find(pane => pane.workspace_id === item.workspace_id); if (target) selectPane(target.pane_id); }} style={[styles.row, { paddingHorizontal: 10, paddingVertical: 9, gap: 9 }]}><Folder size={16} color={item.workspace_id === pane?.workspace_id ? colors.accent : colors.dim} /><Text style={{ color: colors.text, fontSize: 14, fontWeight: '500', flex: 1 }}>{item.label ?? item.workspace_id}</Text><ChevronDown size={13} color={colors.dim} /></Pressable>
-        {snapshot?.panes.filter(pane => pane.workspace_id === item.workspace_id).map(item => <Pressable key={item.pane_id} onPress={() => selectPane(item.pane_id)} accessibilityRole="button" accessibilityState={{ selected: paneId === item.pane_id }} accessibilityLabel={`打开 ${item.pane_id}`} style={[styles.row, { paddingLeft: 34, paddingRight: 12, paddingVertical: 12, gap: 9, borderRadius: 10, backgroundColor: paneId === item.pane_id ? colors.accentSurface : 'transparent' }]}><Dot status={item.agent_status} /><View style={{ flex: 1, gap: 4 }}><Text numberOfLines={1} style={{ fontSize: 14, color: colors.text, fontWeight: paneId === item.pane_id ? '600' : '400' }}>{item.label ?? item.terminal_title_stripped ?? item.agent ?? '终端'}</Text><Text style={{ color: colors.muted, fontSize: 12 }}>{item.agent ?? 'Shell'} · {statusLabel[item.agent_status]} · {item.pane_id}</Text></View>{paneId === item.pane_id && <Check size={15} color={colors.accent} />}</Pressable>)}
+      {!attention && !!snapshot && !visibleWorkspaces.length && <View style={{ padding: 18, gap: 12 }}><Text style={{ color: colors.text, fontSize: 15 }}>{search ? '没有找到匹配的会话' : attention ? '暂时没有需要处理的会话' : '还没有工作区'}</Text><Text style={styles.muted}>{search ? '试试工作区名称、agent 名称或 pane ID。' : attention ? '可以返回全部会话继续查看进度。' : '在开发机的 Herdr 中打开工作区后，这里会自动更新。'}</Text>{(!!search || attention) && <Pressable accessibilityRole="button" onPress={() => { setQuery(''); setAttention(false); }} style={[styles.button, styles.secondary, { alignSelf: 'flex-start' }]}><Text style={{ color: colors.text, fontSize: 14 }}>查看全部会话</Text></Pressable>}</View>}
+      {attention && <AttentionInbox items={inbox.items} query={query} error={inbox.error} onSelect={selectAttention} />}
+      {!attention && visibleWorkspaces.map(item => <View key={item.workspace_id}>
+
+        <View style={styles.row}><Pressable onPress={() => { const target = snapshot && workspacePane(snapshot, item.workspace_id, navigation.memory); if (target) selectPane(target.pane_id); }} style={[styles.row, { flex: 1, paddingHorizontal: 10, paddingVertical: 9, gap: 9 }]}><Folder size={16} color={item.workspace_id === pane?.workspace_id ? colors.accent : colors.dim} /><Text style={{ color: colors.text, fontSize: 14, fontWeight: '500', flex: 1 }}>{item.label ?? item.workspace_id}</Text><ChevronDown size={13} color={colors.dim} /></Pressable><IconButton label={`新建标签页 ${item.workspace_id}`} onPress={() => { const target = snapshot?.panes.find(row => row.workspace_id === item.workspace_id && row.pane_id === paneId) ?? snapshot?.panes.find(row => row.workspace_id === item.workspace_id); setLayoutTarget({ workspaceId: item.workspace_id, tabId: target?.tab_id, paneId: target?.pane_id, action: 'tab.create' }); }}><Plus size={16} color={colors.muted} /></IconButton><IconButton label={`管理工作区 ${item.workspace_id}`} onPress={() => { const target = snapshot?.panes.find(row => row.workspace_id === item.workspace_id && row.pane_id === paneId) ?? snapshot?.panes.find(row => row.workspace_id === item.workspace_id && row.tab_id === item.active_tab_id) ?? snapshot?.panes.find(row => row.workspace_id === item.workspace_id); setLayoutTarget({ workspaceId: item.workspace_id, tabId: target?.tab_id, paneId: target?.pane_id }); }}><MoreHorizontal size={17} color={colors.muted} /></IconButton></View>
+        {snapshot && matchingPanes(snapshot, item.workspace_id, query).map(item => <Pressable key={item.pane_id} onPress={() => selectPane(item.pane_id)} accessibilityRole="button" accessibilityState={{ selected: paneId === item.pane_id }} accessibilityLabel={`打开 ${item.pane_id}`} style={[styles.row, { paddingLeft: 34, paddingRight: 12, paddingVertical: 12, gap: 9, borderRadius: 10, backgroundColor: paneId === item.pane_id ? colors.accentSurface : 'transparent' }]}><Dot status={item.agent_status} /><View style={{ flex: 1, gap: 4 }}><Text numberOfLines={1} style={{ fontSize: 14, color: colors.text, fontWeight: paneId === item.pane_id ? '600' : '400' }}>{item.label ?? item.terminal_title_stripped ?? item.agent ?? '终端'}</Text><Text style={{ color: colors.muted, fontSize: 12 }}>{snapshot?.tabs.find(tab => tab.tab_id === item.tab_id)?.label ?? item.tab_id} · {item.agent ?? 'Shell'} · {statusLabel[item.agent_status]} · {item.pane_id}</Text></View>{paneId === item.pane_id && <Check size={15} color={colors.accent} />}</Pressable>)}
       </View>)}
     </View>
     </ScrollView>
@@ -284,7 +333,7 @@ function Workbench(): React.JSX.Element {
         <View style={{ flex: 1, minWidth: 0, backgroundColor: colors.bg }}>
           <View testID="workbench-header" {...(Platform.OS === 'web' ? { dataSet: { viewport: `${width}x${height}` } } : {})} style={[styles.row, { flexShrink: 0, height: desktop ? 69 : 56, paddingHorizontal: desktop ? 26 : 8, gap: desktop ? 8 : 4, borderBottomWidth: 1, borderColor: colors.line }]}>
             {!desktop && <IconButton label="打开会话列表" onPress={() => setDrawer(true)}><Menu size={21} color={colors.text} /></IconButton>}
-            {!desktop && width < 360 ? <View accessibilityLabel={`${machine?.name} · ${machine?.remoteSession ?? session} · ${pane?.pane_id}`} style={{ flex: 1, gap: 3 }}><View style={[styles.row, {gap: 4}]}><Text numberOfLines={1} style={[styles.muted, {flex: 1, fontSize: 11}]}>{machine?.name}</Text><Text numberOfLines={1} style={[styles.muted, {flexShrink: 1, maxWidth: '58%', fontSize: 11}]}>{machine?.remoteSession ?? session}</Text></View><Text numberOfLines={1} style={{color: colors.text, fontSize: 13, fontFamily: mono}}>{pane?.pane_id ?? '选择会话'}</Text></View> : <View style={{ flex: 1, gap: 3 }}><View style={[styles.row, { gap: 8 }]}><Text numberOfLines={1} style={{ color: colors.text, fontSize: 15, fontWeight: '600', flexShrink: 1 }}>{workspace?.label ?? 'Mobile Herdr'}</Text>{desktop && <><ChevronRight size={13} color={colors.dim} /><Text style={[styles.muted, { fontFamily: mono }]}>{pane?.pane_id ?? '选择会话'}</Text></>}</View>{desktop ? <Text numberOfLines={1} style={[styles.muted, { fontSize: 12, fontFamily: mono }]}>{pane?.foreground_cwd ?? pane?.cwd ?? '你的开发机，随身继续'}</Text> : <View style={[styles.row, { gap: 4 }]}><Text numberOfLines={1} style={[styles.muted, { fontSize: 12, flexShrink: 1 }]}>{machine ? `${machine.name} · ${machine.remoteSession ?? session}` : '你的开发机，随身继续'}</Text>{pane && <Text style={[styles.muted, { fontSize: 12, fontFamily: mono }]}>· {pane.pane_id}</Text>}</View>}</View>}
+            {!desktop && width < 360 ? <View accessibilityLabel={`${machine?.name} · ${machine?.remoteSession ?? session} · ${pane?.pane_id}`} style={{ flex: 1, gap: 3 }}><View style={[styles.row, {gap: 4}]}><Text numberOfLines={1} style={[styles.muted, {flex: 1, fontSize: 11}]}>{machine?.name}</Text><Text numberOfLines={1} style={[styles.muted, {flexShrink: 1, maxWidth: '58%', fontSize: 11}]}>{machine?.remoteSession ?? session}</Text></View><Text numberOfLines={1} style={{color: colors.text, fontSize: 13, fontFamily: mono}}>{pane?.pane_id ?? '选择会话'}</Text></View> : <View style={{ flex: 1, gap: 3 }}><View style={[styles.row, { gap: 8 }]}><Text numberOfLines={1} style={{ color: colors.text, fontSize: 15, fontWeight: '600', flexShrink: 1 }}>{workspace?.label ?? 'Mobile Herdr'}</Text>{desktop && <><ChevronRight size={13} color={colors.dim} /><Text style={[styles.muted, { fontFamily: mono }]}>{pane?.pane_id ?? '选择会话'}</Text></>}</View>{desktop ? <Text numberOfLines={1} style={[styles.muted, { fontSize: 12, fontFamily: mono }]}>{pane?.foreground_cwd ?? pane?.cwd ?? '你的开发机，随身继续'}</Text> : <View style={[styles.row, { gap: 4 }]}><Text numberOfLines={1} style={[styles.muted, { fontSize: 12, flexShrink: 1 }]}>{machine ? `${machine.name} · ${machine.remoteSession ?? session}` : '你的开发机，随身继续'}</Text>{pane && <Text numberOfLines={1} style={[styles.muted, { fontSize: 12, lineHeight: 16, flexShrink: 0, fontFamily: mono }]}>· {pane.pane_id}</Text>}</View>}</View>}
             {desktop && <View style={[styles.row, { gap: 13, marginRight: 12 }]}><Text style={styles.muted}>{counts.working} 工作中</Text><Pressable onPress={() => setAttention(!attention)}><Text style={{ color: counts.blocked ? colors.amber : colors.muted, fontSize: 13 }}>{counts.blocked} 需要你</Text></Pressable></View>}
             {desktop && <><IconButton label="浏览项目文件" onPress={() => setFilesOpen(true)}><Folder size={19} color={colors.muted} /></IconButton><IconButton label="查看改动" onPress={() => setChangesOpen(true)}><FileDiff size={19} color={colors.muted} /></IconButton><IconButton label="版本更新" onPress={() => setUpdateOpen(true)}><Download size={19} color={colors.muted} /></IconButton></>}{desktop && <IconButton label="外观设置" onPress={() => setAppearanceOpen(true)}><Palette size={19} color={colors.muted} /></IconButton>}
             {!desktop && <ModeTabs mode={mode} onChange={changeMode} compact />}
@@ -299,11 +348,12 @@ function Workbench(): React.JSX.Element {
               <View style={{ flex: 1 }} /><Dot status={pane.agent_status} /><Text style={{ color: pane.agent_status === 'idle' || pane.agent_status === 'unknown' ? colors.muted : stateColor(pane.agent_status, colors), fontSize: 13 }}>{statusLabel[pane.agent_status]}</Text>
             </View>}
             {!native && pane.agent_status === 'blocked' && <Pressable onPress={() => setMode('terminal')} style={[styles.row, { gap: 10, backgroundColor: colors.warningSurface, paddingHorizontal: 20, paddingVertical: 12 }]}><Bell size={16} color={colors.amber} /><Text style={{ flex: 1, color: colors.amber, fontSize: 13 }}>Agent 正在等待你确认，打开终端查看并操作。</Text><ArrowRight size={16} color={colors.amber} /></Pressable>}
-            <NativeSession key={`native:${machine.id}:${session}:${pane.pane_id}`} takeover={takeover.state} enabling={takeover.pending} onEnable={takeover.start} state={native} control={control} provider={pane.agent} online={online} compact={!desktop} hideBar={!desktop && !native} detailsOpen={nativeDetailsOpen} onDetailsOpen={() => setNativeDetailsOpen(true)} onDetailsClose={() => setNativeDetailsOpen(false)} onError={text => notify(text, true)} />
+            <NativeSession key={`native:${machine.id}:${session}:${pane.pane_id}`} takeover={takeover.state} enabling={takeover.pending} onEnable={takeover.start} onRestart={takeover.restart} state={native} control={control} provider={pane.agent} online={online} compact={!desktop} hideBar={!desktop && !native} detailsOpen={nativeDetailsOpen} onDetailsOpen={() => setNativeDetailsOpen(true)} onDetailsClose={() => setNativeDetailsOpen(false)} onError={text => notify(text, true)} />
+            {snapshot && <PaneTabs snapshot={attentionSnapshot ?? snapshot} pane={pane} memory={navigation.memory} onSelect={selectPane} onCreate={() => setLayoutTarget({ workspaceId: pane.workspace_id, tabId: pane.tab_id, paneId: pane.pane_id, action: 'tab.create' })} onManage={() => setLayoutTarget({ workspaceId: pane.workspace_id, tabId: pane.tab_id, paneId: pane.pane_id })} />}
             {(mode === 'terminal' || visitedTerminal === terminalKey) && <View style={{ flex: mode === 'terminal' ? 1 : 0, display: mode === 'terminal' ? 'flex' : 'none', minHeight: 0 }}><Terminal active={mode === 'terminal'} key={terminalKey} machine={machine} session={session} pane={pane.pane_id} /></View>}
             {mode === 'chat' && <View style={{ flex: 1, width: '100%', maxWidth: 880, alignSelf: 'center', minHeight: 0 }}>
               <Conversation toolsOpen={readingToolsOpen} onToolsOpenChange={setReadingToolsOpen} native={!!native} footer={native && <NativeRequests state={native} control={control} online={online} onError={text => notify(text, true)} />} key={`chat:${machine.id}:${session}:${pane.pane_id}:${native?.runtimeId}:${native?.conversationId}`} chat={connection.chat} machine={machine} session={session} pane={pane} online={online} onTerminal={() => changeMode('terminal')} onBound={connection.reconnect} onError={text => notify(text, true)} />
-              <Composer native={native} control={control} compact={compact} key={`composer:${machine.id}:${session}:${pane.pane_id}:${native?.runtimeId}:${native?.conversationId}`} machine={machine} session={session} pane={pane} online={online} onError={text => notify(text, true)} onSent={() => notify(native ? '' : '消息已送入原会话')} onNavigate={target => { if (target === 'search') setReadingToolsOpen(true); else if (target === 'files') setFilesOpen(true); else setChangesOpen(true); }} onTerminal={() => changeMode('terminal')} />
+              <Composer queue={messageQueue} native={native} control={control} compact={compact} key={`composer:${machine.id}:${session}:${pane.pane_id}:${native?.runtimeId}:${native?.conversationId}`} machine={machine} session={session} pane={pane} online={online} onError={text => notify(text, true)} onSent={() => notify(native ? '' : '消息已送入原会话')} onNavigate={target => { if (target === 'search') setReadingToolsOpen(true); else if (target === 'files') setFilesOpen(true); else setChangesOpen(true); }} onTerminal={() => changeMode('terminal')} />
             </View>}
           </> : <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 18, padding: 30 }}><HerdMark /><Text style={{ color: colors.text, fontSize: 24, fontWeight: '500' }}>{machine ? '选择一个原有会话' : '你的开发机，随身继续。'}</Text><Text style={[styles.muted, { textAlign: 'center', maxWidth: 340 }]}>{machine ? '工作区、终端和 agent 都来自开发机上运行中的 Herdr。' : '连接 Herdr，打开原来的 session。离开电脑，agent 的工作仍在继续。'}</Text><Pressable onPress={() => machine ? setDrawer(true) : setShowConnect(true)} style={styles.button}><Text style={styles.buttonText}>{machine ? '查看会话' : '连接开发机'}</Text><ArrowRight size={16} color={colors.accentInk} /></Pressable></View>}
 
@@ -328,7 +378,9 @@ function Workbench(): React.JSX.Element {
       status={`${connectionLabel}${pane ? ' · ' + statusLabel[pane.agent_status] : ''}`}
       nativeLabel={native ? '原生连接详情' : '启用手机接管'} onNativeDetails={['codex', 'pi'].includes(pane?.agent ?? '') ? () => setNativeDetailsOpen(true) : undefined}
       onFiles={() => setFilesOpen(true)} onUpdate={() => setUpdateOpen(true)} onChanges={() => setChangesOpen(true)} onInstall={pwa.installed ? undefined : () => setInstallOpen(true)} onReading={() => { setMode('chat'); setReadingToolsOpen(true); }} onAppearance={() => setAppearanceOpen(true)}
+      onLayout={pane ? () => setLayoutTarget({ workspaceId: pane.workspace_id, tabId: pane.tab_id, paneId: pane.pane_id }) : undefined}
       onMachines={() => setMachinePanel(true)} onAttention={() => { setAttention(true); setDrawer(true); }} />}
+    {layoutTarget && machine && snapshot && <LayoutManager key={`${machineScope(machine)}:${session}:${layoutTarget.workspaceId}:${layoutTarget.tabId}:${layoutTarget.paneId}`} target={layoutTarget} machine={machine} session={session} snapshot={snapshot} online={online} onClose={() => setLayoutTarget(undefined)} onResult={result => { connection.acceptSnapshot(result.snapshot); if (result.pane) { setQuery(''); setAttention(false); selectPane(result.pane.pane_id); setMode('terminal'); } }} />}
     <DiagnosticsPanel visible={diagnosticsOpen} machine={machine} session={session} pane={pane?.pane_id} onClose={() => setDiagnosticsOpen(false)} />
     <AppearancePanel visible={appearanceOpen} onClose={() => setAppearanceOpen(false)} />
     <PwaInstallPanel visible={installOpen} onClose={() => setInstallOpen(false)} pwa={pwa} />
